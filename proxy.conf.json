@@ -1,0 +1,15 @@
+{
+  "/api": {
+    "target": "https://uavpms.ddns.net",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "debug"
+  },
+  "/hubs": {
+    "target": "https://uavpms.ddns.net",
+    "secure": false,
+    "changeOrigin": true,
+    "ws": true,
+    "logLevel": "debug"
+  }
+}
