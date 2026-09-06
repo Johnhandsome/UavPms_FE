@@ -1,11 +1,24 @@
-<aside class="app-sidebar ant-layout-sider" [class.app-sidebar-mobile]="open()" style="flex: 0 0 256px; max-width: 256px; min-width: 256px; width: 256px" aria-label="Điều hướng chính"><div class="ant-layout-sider-children">
+<aside class="app-sidebar ant-layout-sider" [class.app-sidebar-mobile]="open()" style="flex: 0 0 256px; max-width: 256px; min-width: 256px; width: 256px" aria-label="�i?u hu?ng ch�nh"><div class="ant-layout-sider-children">
   <div class="app-sidebar-brand"><img ngSrc="/images/evn-sidebar-logo.png" width="140" height="54" priority alt="EVN Logo" class="app-sidebar-logo" /></div>
   <nav class="app-sidebar-nav">
     <div class="app-sidebar-nav-primary">
-      @for (item of primaryLinks(); track item.path) { <a class="app-nav-item" [routerLink]="item.path" routerLinkActive="app-nav-item-active" (click)="closed.emit()"><span nz-icon [nzType]="item.icon" class="app-nav-icon" aria-hidden="true"></span><span class="app-nav-label">{{ item.label }}</span></a> }
+      @for (item of primaryLinks(); track item.path) {
+        <a class="app-nav-item" [routerLink]="item.path" routerLinkActive="app-nav-item-active" (click)="closed.emit()">
+          <span nz-icon [nzType]="item.icon" class="app-nav-icon" aria-hidden="true"></span>
+          <span class="app-nav-label">{{ item.label }}</span>
+          @if (item.badgeCount && item.badgeCount > 0) {
+            <span class="app-nav-badge-danger">{{ item.badgeCount }}</span>
+          }
+        </a>
+      }
     </div>
     <div class="app-sidebar-nav-secondary">
-      @for (item of secondaryLinks(); track item.path) { <a class="app-nav-item" [routerLink]="item.path" routerLinkActive="app-nav-item-active" (click)="closed.emit()"><span nz-icon [nzType]="item.icon" class="app-nav-icon" aria-hidden="true"></span><span class="app-nav-label">{{ item.label }}</span></a> }
+      @for (item of secondaryLinks(); track item.path) {
+        <a class="app-nav-item" [routerLink]="item.path" routerLinkActive="app-nav-item-active" (click)="closed.emit()">
+          <span nz-icon [nzType]="item.icon" class="app-nav-icon" aria-hidden="true"></span>
+          <span class="app-nav-label">{{ item.label }}</span>
+        </a>
+      }
     </div>
   </nav>
 </div></aside>

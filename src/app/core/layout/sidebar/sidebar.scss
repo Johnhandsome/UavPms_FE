@@ -4,3 +4,20 @@ aside { position: sticky; top: 0; display: flex; flex-direction: column; width: 
 nav { display: grid; gap: .35rem; } nav a { display: flex; align-items: center; gap: .8rem; min-height: 2.75rem; padding: .65rem .75rem; border-radius: .65rem; color: #c8d5ef; text-decoration: none; font-size: .9rem; font-weight: 600; } nav a:hover { background: rgb(255 255 255 / .08); color: #fff; } nav a.active { background: rgb(251 191 36 / .16); color: #fff; box-shadow: inset 3px 0 var(--color-accent); } nav a span { width: 1.4rem; text-align: center; font-size: 1.1rem; }
 .sidebar-foot { display: flex; align-items: center; gap: .7rem; margin-top: auto; padding: .85rem; border: 1px solid rgb(255 255 255 / .08); border-radius: .75rem; background: rgb(255 255 255 / .04); }.sidebar-foot span:last-child { display: grid; font-size: .76rem; }.pulse { width: .55rem; height: .55rem; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 5px rgb(74 222 128 / .12); }
 @media (max-width: 900px) { aside { position: fixed; left: -17rem; transition: left .2s ease; box-shadow: 1rem 0 2rem rgb(15 23 42 / .2); } aside.mobile-open { left: 0; } }
+
+.app-nav-badge-danger {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 12px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+  animation: pulse-sidebar 2s infinite;
+}
+
+@keyframes pulse-sidebar {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}

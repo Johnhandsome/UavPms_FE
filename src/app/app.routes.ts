@@ -19,6 +19,8 @@ export const routes: Routes = [
       { path: 'assets/:id', loadComponent: () => import('./features/assets/pages/asset-health-dashboard/asset-health-dashboard').then((m) => m.AssetHealthDashboard), title: 'Asset Detail | UAV-PMS' },
       { path: 'ai-analysis/upload', canActivate: [roleGuard(['Admin', 'Manager', 'Analyst'])], loadComponent: () => import('./features/ai-analysis/pages/standalone-upload/standalone-upload').then((m) => m.StandaloneUpload), title: 'AI Analysis Upload | UAV-PMS' },
       { path: 'ai-analysis', redirectTo: 'ai-analysis/upload' },
+      { path: 'emergency-alerts', canActivate: [roleGuard(['Admin', 'Manager', 'Analyst'])], loadComponent: () => import('./features/emergency-alerts/pages/emergency-alerts-review/emergency-alerts-review').then((m) => m.EmergencyAlertsReview), title: 'C?nh B�o Kh?n C?p Edge AI | UAV-PMS' },
+      { path: 'alerts', redirectTo: 'emergency-alerts' },
       { path: 'ai-review', canActivate: [roleGuard(['Admin', 'Manager', 'Analyst'])], loadComponent: () => import('./features/analyst-review/pages/detection-list/detection-list').then((m) => m.DetectionList), title: 'Duyệt sự cố AI | UAV-PMS' },
       { path: 'ai-review/:id', canActivate: [roleGuard(['Admin', 'Manager', 'Analyst'])], loadComponent: () => import('./features/analyst-review/pages/detection-review/detection-review').then((m) => m.DetectionReview), title: 'Thẩm định phát hiện AI | UAV-PMS' },
       { path: 'gis', canActivate: [roleGuard(['Admin', 'Manager', 'Analyst', 'Inspector'])], loadComponent: () => import('./features/gis/pages/gis-monitoring/gis-monitoring').then((m) => m.GisMonitoring), title: 'Bản đồ GIS Lưới điện | UAV-PMS' },
@@ -32,3 +34,4 @@ export const routes: Routes = [
   },
   { path: '**', redirectTo: 'dashboard' },
 ];
+
