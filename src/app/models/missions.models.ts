@@ -14,6 +14,7 @@ export interface Mission {
   readonly managerUsername: string;
   readonly createdAt: string;
   readonly updatedAt: string | null;
+  readonly scheduledAt?: string;
   readonly targets: readonly MissionTarget[];
 }
 

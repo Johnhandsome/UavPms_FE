@@ -36,6 +36,16 @@ export class MissionsApi {
     return this.http.put<unknown>(`${this.url}/${id}`, request).pipe(map((response) => normalizeMission(unwrapApiData(response))));
   }
 
+  getMyMissions() {
+    return this.http.get<unknown>(`${this.url}/my`).pipe(
+      map((response) => {
+        const raw = unwrapApiData<unknown>(response);
+        const items = Array.isArray(raw) ? raw : itemsValue(raw);
+        return items.map(normalizeMission);
+      }),
+    );
+  }
+
   delete(id: string) {
     return this.http.delete<unknown>(`${this.url}/${id}`);
   }
@@ -89,6 +99,7 @@ const normalizeMission = (value: unknown): Mission => {
     managerUsername: stringValue(source['managerUsername'], 'Chưa có quản lý'),
     createdAt: stringValue(source['createdAt']),
     updatedAt: source['updatedAt'] === undefined || source['updatedAt'] === null ? null : String(source['updatedAt']),
+    scheduledAt: stringValue(pick(source, 'scheduledStartAt', 'scheduledAt')),
     targets: normalizeTargets(pick(source, 'missionTargets', 'targets', 'targetAssets')),
   };
 };
