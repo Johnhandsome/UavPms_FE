@@ -3,15 +3,25 @@ import { Router } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
 import { Auth } from '../../../../core/auth/auth';
 import { GisApi, GisDataSnapshot } from '../../data-access/gis-api';
+import { MissionsApi } from '../../../missions/data-access/missions-api';
 import { MissionTargetSelection } from '../../../missions/data-access/mission-target-selection';
 import { GeoJsonPolygon, SelectableAsset } from '../../../../models/assets.models';
+import { Mission } from '../../../../models/missions.models';
 import { GisMonitoring, rectangleToPolygon } from './gis-monitoring';
 
 interface GisHarness {
   loadGisData(): void;
+  loadMissionsData(): void;
   loading(): boolean;
   error(): string;
   towers(): readonly unknown[];
+  missions(): readonly Mission[];
+  missionsLoading(): boolean;
+  missionsError(): string;
+  showMissionsLayer(): boolean;
+  includeCompletedMissions(): boolean;
+  canViewMissions(): boolean;
+  toggleLayer(layer: string): void;
   startDrawing(mode: 'rectangle' | 'polygon'): void;
   startEditing(): void;
   completeEditedGeometry(geometry: GeoJsonPolygon): void;
@@ -36,11 +46,17 @@ interface GisHarness {
   inspectAsset(asset: SelectableAsset): void;
   selectedEntity(): unknown;
   createMission(): void;
+  navigateToMission(id: string): void;
+  isMissionInProgress(status: string): boolean;
+  isMissionPlanned(status: string): boolean;
+  missionStatusLabel(status: string): string;
+  missionStatusClass(status: string): string;
 }
 
 describe('GisMonitoring asset selection', () => {
   let fixture: ComponentFixture<GisMonitoring>;
   let api: { spatialQuery: ReturnType<typeof vi.fn>; getAllGisData: ReturnType<typeof vi.fn> };
+  let missionsApiMock: { list: ReturnType<typeof vi.fn>; getMyMissions: ReturnType<typeof vi.fn> };
   let router: { navigate: ReturnType<typeof vi.fn> };
   let store: MissionTargetSelection;
   let authMock: { user: ReturnType<typeof vi.fn> };
@@ -61,7 +77,11 @@ describe('GisMonitoring asset selection', () => {
   });
 
   beforeEach(() => {
-    api = { spatialQuery: vi.fn().mockReturnValue(of([asset])), getAllGisData: vi.fn() };
+    api = { spatialQuery: vi.fn().mockReturnValue(of([asset])), getAllGisData: vi.fn().mockReturnValue(of({ towers: [], lines: [], anomalies: [], alerts: [] })) };
+    missionsApiMock = {
+      list: vi.fn().mockReturnValue(of({ items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 1 })),
+      getMyMissions: vi.fn().mockReturnValue(of([])),
+    };
     router = { navigate: vi.fn() };
     authMock = { user: vi.fn().mockReturnValue({ id: 'u1', email: 'manager@evn.vn', role: 'Manager' }) };
 
@@ -69,6 +89,7 @@ describe('GisMonitoring asset selection', () => {
       imports: [GisMonitoring],
       providers: [
         { provide: GisApi, useValue: api },
+        { provide: MissionsApi, useValue: missionsApiMock },
         { provide: Router, useValue: router },
         { provide: Auth, useValue: authMock },
       ],
@@ -352,5 +373,196 @@ describe('GisMonitoring asset selection', () => {
     expect(component.loading()).toBe(false);
     expect(component.towers()).toEqual([]);
     expect(component.error()).toContain(status === 403 ? '403' : 'Không thể tải');
+  });
+
+  describe('Mission Visibility on GIS Map', () => {
+    const mockMissionPlanned: Mission = {
+      id: 'm-1',
+      missionCode: 'MIS-001',
+      title: 'Kiểm tra cột T101',
+      routeData: '',
+      assignedToUserId: 'u-inspector',
+      assignedToUsername: 'Nguyễn Văn Bay',
+      droneCode: 'UAV-M300',
+      status: 'Pending',
+      description: 'Định kỳ',
+      managerId: 'u-mgr',
+      managerUsername: 'Trần Quản Lý',
+      createdAt: '2026-09-08T08:00:00Z',
+      updatedAt: null,
+      scheduledAt: '2026-09-09T08:00:00Z',
+      targets: [
+        {
+          assetId: 'a1',
+          assetCode: 'TOW-101',
+          assetName: 'Cột 101',
+          towerCode: 'T101',
+          sequence: 1,
+          inspectionStatus: 'Pending',
+          latitude: 21.0285,
+          longitude: 105.8542,
+        },
+      ],
+    };
+
+    const mockMissionExecuting: Mission = {
+      id: 'm-2',
+      missionCode: 'MIS-002',
+      title: 'Khảo sát cột T101 khẩn cấp',
+      routeData: '',
+      assignedToUserId: 'u-inspector',
+      assignedToUsername: 'Nguyễn Văn Bay',
+      droneCode: 'UAV-M300',
+      status: 'Executing',
+      description: 'Khẩn',
+      managerId: 'u-mgr',
+      managerUsername: 'Trần Quản Lý',
+      createdAt: '2026-09-08T08:30:00Z',
+      updatedAt: null,
+      scheduledAt: '2026-09-08T09:00:00Z',
+      targets: [
+        {
+          assetId: 'a1',
+          assetCode: 'TOW-101',
+          assetName: 'Cột 101',
+          towerCode: 'T101',
+          sequence: 1,
+          inspectionStatus: 'Executing',
+          latitude: 21.0285,
+          longitude: 105.8542,
+        },
+      ],
+    };
+
+    const mockMissionCompleted: Mission = {
+      id: 'm-3',
+      missionCode: 'MIS-003',
+      title: 'Kiểm tra hoàn thành T102',
+      routeData: '',
+      assignedToUserId: 'u-inspector',
+      assignedToUsername: 'Nguyễn Văn Bay',
+      droneCode: 'UAV-M300',
+      status: 'Completed',
+      description: 'Đã xong',
+      managerId: 'u-mgr',
+      managerUsername: 'Trần Quản Lý',
+      createdAt: '2026-09-07T08:00:00Z',
+      updatedAt: '2026-09-07T10:00:00Z',
+      scheduledAt: '2026-09-07T08:30:00Z',
+      targets: [
+        {
+          assetId: 'a2',
+          assetCode: 'TOW-102',
+          assetName: 'Cột 102',
+          towerCode: 'T102',
+          sequence: 1,
+          inspectionStatus: 'Completed',
+          latitude: 21.0300,
+          longitude: 105.8550,
+        },
+      ],
+    };
+
+    it('Inspector role only calls getMyMissions() and sees assigned missions', () => {
+      authMock.user.mockReturnValue({ id: 'u-inspector', email: 'inspector@evn.vn', role: 'Inspector' });
+      missionsApiMock.getMyMissions.mockReturnValue(of([mockMissionPlanned]));
+
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.loadMissionsData();
+
+      expect(missionsApiMock.getMyMissions).toHaveBeenCalledOnce();
+      expect(missionsApiMock.list).not.toHaveBeenCalled();
+      expect(component.missions()).toEqual([mockMissionPlanned]);
+    });
+
+    it('Manager and Admin roles call list() with backend pagination', () => {
+      authMock.user.mockReturnValue({ id: 'u-admin', email: 'admin@evn.vn', role: 'Admin' });
+      missionsApiMock.list.mockReturnValue(of({ items: [mockMissionPlanned, mockMissionExecuting], page: 1, pageSize: 100, totalCount: 2, totalPages: 1 }));
+
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.loadMissionsData();
+
+      expect(missionsApiMock.list).toHaveBeenCalledWith({ page: 1, pageSize: 100 });
+      expect(missionsApiMock.getMyMissions).not.toHaveBeenCalled();
+      expect(component.missions().length).toBe(2);
+    });
+
+    it('Unauthorized roles (Technician, Viewer) cannot view missions layer', () => {
+      authMock.user.mockReturnValue({ id: 'u-tech', email: 'tech@evn.vn', role: 'Technician' });
+      const component = fixture.componentInstance as unknown as GisHarness;
+      expect(component.canViewMissions()).toBe(false);
+
+      component.loadMissionsData();
+      expect(missionsApiMock.list).not.toHaveBeenCalled();
+      expect(missionsApiMock.getMyMissions).not.toHaveBeenCalled();
+      expect(component.missions()).toEqual([]);
+    });
+
+    it('handles API loading and error states gracefully', () => {
+      authMock.user.mockReturnValue({ id: 'u-admin', email: 'admin@evn.vn', role: 'Admin' });
+      missionsApiMock.list.mockReturnValue(throwError(() => ({ status: 500 })));
+
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.loadMissionsData();
+
+      expect(component.missionsLoading()).toBe(false);
+      expect(component.missionsError()).toContain('Không thể tải');
+      expect(component.missions()).toEqual([]);
+    });
+
+    it('allows toggling mission layer visibility on/off', () => {
+      const component = fixture.componentInstance as unknown as GisHarness;
+      expect(component.showMissionsLayer()).toBe(true);
+
+      component.toggleLayer('missions');
+      expect(component.showMissionsLayer()).toBe(false);
+
+      component.toggleLayer('missions');
+      expect(component.showMissionsLayer()).toBe(true);
+    });
+
+    it('differentiates mission state classes and labels correctly', () => {
+      const component = fixture.componentInstance as unknown as GisHarness;
+
+      expect(component.isMissionPlanned('Pending')).toBe(true);
+      expect(component.isMissionPlanned('Scheduled')).toBe(true);
+      expect(component.isMissionInProgress('Executing')).toBe(true);
+      expect(component.isMissionInProgress('InProgress')).toBe(true);
+
+      expect(component.missionStatusClass('Pending')).toBe('planned');
+      expect(component.missionStatusClass('Executing')).toBe('inprogress');
+      expect(component.missionStatusClass('Completed')).toBe('completed');
+
+      expect(component.missionStatusLabel('Pending')).toBe('Đã lên lịch');
+      expect(component.missionStatusLabel('Executing')).toBe('Đang thực hiện');
+      expect(component.missionStatusLabel('Completed')).toBe('Đã hoàn thành');
+    });
+
+    it('groups multiple missions targeting the same asset into a cluster', () => {
+      authMock.user.mockReturnValue({ id: 'u-admin', email: 'admin@evn.vn', role: 'Admin' });
+      // Both missions target the same tower coordinate (21.0285, 105.8542)
+      missionsApiMock.list.mockReturnValue(of({ items: [mockMissionPlanned, mockMissionExecuting], page: 1, pageSize: 100, totalCount: 2, totalPages: 1 }));
+
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.loadMissionsData();
+
+      expect(component.missions().length).toBe(2);
+    });
+
+    it('filters completed missions unless includeCompletedMissions is toggled', () => {
+      authMock.user.mockReturnValue({ id: 'u-admin', email: 'admin@evn.vn', role: 'Admin' });
+      missionsApiMock.list.mockReturnValue(of({ items: [mockMissionPlanned, mockMissionCompleted], page: 1, pageSize: 100, totalCount: 2, totalPages: 1 }));
+
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.loadMissionsData();
+      expect(component.missions().length).toBe(2);
+      expect(component.includeCompletedMissions()).toBe(false);
+    });
+
+    it('navigates to mission detail upon action click', () => {
+      const component = fixture.componentInstance as unknown as GisHarness;
+      component.navigateToMission('m-1');
+      expect(router.navigate).toHaveBeenCalledWith(['/missions', 'm-1']);
+    });
   });
 });

@@ -18,7 +18,7 @@ import { Router, RouterLink } from '@angular/router';
 import * as L from 'leaflet';
 import 'leaflet-draw';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { finalize } from 'rxjs';
+import { finalize, map, Observable } from 'rxjs';
 import { GeoJsonPolygon, SelectableAsset } from '../../../../models/assets.models';
 import { Auth } from '../../../../core/auth/auth';
 import { MissionTargetSelection } from '../../../missions/data-access/mission-target-selection';
@@ -30,6 +30,9 @@ import {
   GisTransmissionLine,
 } from '../../data-access/gis-api';
 
+import { Mission } from '../../../../models/missions.models';
+import { MissionsApi } from '../../../missions/data-access/missions-api';
+
 export type MapType = 'google-streets' | 'google-hybrid' | 'google-terrain' | 'osm';
 export type SelectionDrawMode = 'none' | 'rectangle' | 'polygon';
 export type SelectionUxState = 'idle' | 'choosing' | 'drawing-rectangle' | 'drawing-polygon' | 'editing' | 'querying' | 'success' | 'empty' | 'error';
@@ -40,10 +43,19 @@ export const rectangleToPolygon = (first: { lat: number; lng: number }, second: 
   return { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] };
 };
 
+export interface MissionTargetCluster {
+  readonly assetKey: string;
+  readonly towerCode: string;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly missions: readonly Mission[];
+}
+
 type SelectedGisEntity =
   | { type: 'tower'; data: GisTower }
   | { type: 'anomaly'; data: GisAnomalyFeature }
-  | { type: 'alert'; data: GisAlert };
+  | { type: 'alert'; data: GisAlert }
+  | { type: 'missionCluster'; data: MissionTargetCluster };
 
 @Component({
   selector: 'app-gis-monitoring',
@@ -56,11 +68,27 @@ type SelectedGisEntity =
 })
 export class GisMonitoring implements AfterViewInit, OnDestroy {
   private readonly gisApi = inject(GisApi);
+  private readonly missionsApi = inject(MissionsApi);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private readonly auth = inject(Auth);
   protected readonly targetSelection = inject(MissionTargetSelection);
   private readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
+
+  // Permission check for viewing missions based on user role
+  protected readonly canViewMissions = computed(() => {
+    const role = (this.auth.user()?.role || '').toLowerCase();
+    return (
+      role === 'admin' ||
+      role === 'systemadmin' ||
+      role === 'administrator' ||
+      role === 'manager' ||
+      role === 'supervisor' ||
+      role === 'inspector' ||
+      role === 'pilot' ||
+      role === 'analyst'
+    );
+  });
 
   // Permission check for creating missions based on existing user role
   protected readonly canCreateMission = computed(() => {
@@ -82,6 +110,7 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
   private linesLayer = L.layerGroup();
   private defectsLayer = L.layerGroup();
   private alertsLayer = L.layerGroup();
+  private missionsLayer = L.layerGroup();
   private selectionResultsLayer = L.layerGroup();
   private confirmedTargetsLayer = L.layerGroup();
   private selectionBoundary: L.Polygon | L.Rectangle | null = null;
@@ -107,6 +136,9 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
   protected readonly lines = signal<readonly GisTransmissionLine[]>([]);
   protected readonly anomalies = signal<readonly GisAnomalyFeature[]>([]);
   protected readonly alerts = signal<readonly GisAlert[]>([]);
+  protected readonly missions = signal<readonly Mission[]>([]);
+  protected readonly missionsLoading = signal(false);
+  protected readonly missionsError = signal('');
 
   // State signals
   protected readonly loading = signal(false);
@@ -162,6 +194,8 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
   protected readonly showLinesLayer = signal(true);
   protected readonly showDefectsLayer = signal(true);
   protected readonly showAlertsLayer = signal(true);
+  protected readonly showMissionsLayer = signal(true);
+  protected readonly includeCompletedMissions = signal(false);
 
   // Filters
   protected readonly searchCode = signal('');
@@ -174,6 +208,7 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
   protected readonly criticalAlertsCount = computed(
     () => this.alerts().filter((a) => a.priority === 'Critical' && a.status === 'Active').length,
   );
+  protected readonly activeMissionsCount = computed(() => this.missions().length);
 
   protected readonly filteredAnomalies = computed(() => {
     const list = this.anomalies();
@@ -259,6 +294,7 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
     this.towersLayer.addTo(this.map);
     this.defectsLayer.addTo(this.map);
     this.alertsLayer.addTo(this.map);
+    this.missionsLayer.addTo(this.map);
     this.selectionResultsLayer.addTo(this.map);
     this.confirmedTargetsLayer.addTo(this.map);
     this.editableLayers.addTo(this.map);
@@ -750,17 +786,18 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
           this.alerts.set(data.alerts);
 
           this.renderAllLayers();
-
+          this.loadMissionsData();
         },
         error: (error: unknown) => {
+          console.error('[GIS API load error]:', error);
           const status = error instanceof Object && 'status' in error ? Number(error.status) : 0;
           this.error.set(status === 403 ? '403 — Bạn không có quyền xem dữ liệu GIS.' : 'Không thể tải dữ liệu GIS. Vui lòng thử lại.');
           this.towers.set([]);
           this.lines.set([]);
           this.anomalies.set([]);
           this.alerts.set([]);
+          this.missions.set([]);
           this.renderAllLayers();
-
         },
       });
   }
@@ -770,6 +807,7 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
     this.renderTowers();
     this.renderDefects();
     this.renderAlerts();
+    this.renderMissions();
   }
 
   private renderTransmissionLines(): void {
@@ -877,18 +915,194 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
     });
   }
 
+  protected loadMissionsData(): void {
+    if (!this.canViewMissions()) {
+      this.missions.set([]);
+      this.renderMissions();
+      return;
+    }
+
+    const role = (this.auth.user()?.role || '').toLowerCase();
+    const isInspector = role === 'inspector' || role === 'pilot';
+
+    this.missionsLoading.set(true);
+    this.missionsError.set('');
+
+    const query$: Observable<readonly Mission[]> = isInspector
+      ? this.missionsApi.getMyMissions()
+      : this.missionsApi.list({ page: 1, pageSize: 100 }).pipe(
+          map((page) => page.items),
+        );
+
+    query$
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.missionsLoading.set(false)),
+      )
+      .subscribe({
+        next: (items: readonly Mission[]) => {
+          this.missions.set(items);
+          this.renderMissions();
+        },
+        error: () => {
+          this.missionsError.set('Không thể tải dữ liệu nhiệm vụ bay.');
+          this.missions.set([]);
+          this.renderMissions();
+        },
+      });
+  }
+
+  protected renderMissions(): void {
+    this.missionsLayer.clearLayers();
+    if (!this.showMissionsLayer() || !this.canViewMissions()) return;
+
+    const allMissions = this.missions();
+    const includeCompleted = this.includeCompletedMissions();
+
+    // Filter missions based on status
+    const visibleMissions = allMissions.filter((m) => {
+      const norm = (m.status || '').toLowerCase().replace(/\s+/g, '');
+      if (norm === 'completed') {
+        return includeCompleted;
+      }
+      return true;
+    });
+
+    // Group missions by target asset/tower coordinates to avoid unreadable overlapping markers
+    const clusterMap = new Map<string, { key: string; towerCode: string; lat: number; lng: number; missions: Mission[] }>();
+
+    visibleMissions.forEach((mission) => {
+      // Find targets in mission
+      if (mission.targets && mission.targets.length > 0) {
+        mission.targets.forEach((target) => {
+          // If target has latitude & longitude, use directly; otherwise match with towers list
+          let lat = target.latitude;
+          let lng = target.longitude;
+          const towerCode = target.towerCode || target.assetCode || '';
+
+          if ((lat === undefined || lng === undefined || lat === 0) && towerCode) {
+            const tower = this.towers().find((t) => t.towerCode.toLowerCase() === towerCode.toLowerCase() || t.id === target.assetId);
+            if (tower) {
+              lat = tower.latitude;
+              lng = tower.longitude;
+            }
+          }
+
+          if (lat !== undefined && lng !== undefined && Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0) {
+            const clusterKey = `${lat.toFixed(5)}_${lng.toFixed(5)}`;
+            const existing = clusterMap.get(clusterKey);
+            if (existing) {
+              if (!existing.missions.some((m) => m.id === mission.id)) {
+                existing.missions.push(mission);
+              }
+            } else {
+              clusterMap.set(clusterKey, {
+                key: clusterKey,
+                towerCode: towerCode || 'Mục tiêu',
+                lat,
+                lng,
+                missions: [mission],
+              });
+            }
+          }
+        });
+      }
+    });
+
+    clusterMap.forEach((cluster) => {
+      const count = cluster.missions.length;
+      // Determine dominant state among missions in cluster
+      const hasInProgress = cluster.missions.some((m) => this.isMissionInProgress(m.status));
+      const hasPlanned = cluster.missions.some((m) => this.isMissionPlanned(m.status));
+      const allCompleted = cluster.missions.every((m) => (m.status || '').toLowerCase() === 'completed');
+
+      const stateClass = hasInProgress
+        ? 'state-inprogress'
+        : hasPlanned
+        ? 'state-planned'
+        : allCompleted
+        ? 'state-completed'
+        : 'state-other';
+
+      const label = count > 1 ? `${count}` : '1';
+
+      const icon = L.divIcon({
+        className: `custom-mission-badge ${stateClass}`,
+        html: `<span class="badge-num">${label}</span>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      const marker = L.marker([cluster.lat, cluster.lng], { icon, zIndexOffset: 950 });
+
+      // Click opens compact popup or detail drawer
+      marker.on('click', () => {
+        this.selectedEntity.set({
+          type: 'missionCluster',
+          data: {
+            assetKey: cluster.key,
+            towerCode: cluster.towerCode,
+            latitude: cluster.lat,
+            longitude: cluster.lng,
+            missions: cluster.missions,
+          },
+        });
+      });
+
+      const summaryTitle = count > 1 ? `${count} Nhiệm vụ tại ${cluster.towerCode}` : `${cluster.missions[0]?.title || 'Nhiệm vụ'} (${cluster.towerCode})`;
+      const summaryStatus = cluster.missions.map((m) => this.missionStatusLabel(m.status)).join(', ');
+
+      marker.bindTooltip(
+        `<div style="font-weight: 700; font-size: 12px; color: #1e293b;">📋 ${summaryTitle}</div><div style="font-size: 11px; color: #64748b;">Trạng thái: ${summaryStatus}</div>`,
+        { direction: 'top', offset: [0, -12] },
+      );
+
+      this.missionsLayer.addLayer(marker);
+    });
+  }
+
+  protected isMissionInProgress(status: string): boolean {
+    const norm = (status || '').toLowerCase().replace(/\s+/g, '');
+    return norm === 'inprogress' || norm === 'executing' || norm === 'running';
+  }
+
+  protected isMissionPlanned(status: string): boolean {
+    const norm = (status || '').toLowerCase().replace(/\s+/g, '');
+    return norm === 'pending' || norm === 'planned' || norm === 'scheduled';
+  }
+
+  protected missionStatusLabel(status: string): string {
+    const norm = (status || '').toLowerCase().replace(/\s+/g, '');
+    if (norm === 'pending' || norm === 'planned' || norm === 'scheduled') return 'Đã lên lịch';
+    if (norm === 'inprogress' || norm === 'executing' || norm === 'running') return 'Đang thực hiện';
+    if (norm === 'completed') return 'Đã hoàn thành';
+    if (norm === 'failed') return 'Thất bại';
+    if (norm === 'cancelled') return 'Đã hủy';
+    return status || 'Chờ xử lý';
+  }
+
+  protected missionStatusClass(status: string): string {
+    if (this.isMissionInProgress(status)) return 'inprogress';
+    if (this.isMissionPlanned(status)) return 'planned';
+    if ((status || '').toLowerCase() === 'completed') return 'completed';
+    return 'other';
+  }
+
   protected applyFilters(): void {
     this.renderDefects();
+    this.renderMissions();
   }
 
   protected resetFilters(): void {
     this.searchCode.set('');
     this.severityFilter.set('');
     this.statusFilter.set('');
+    this.includeCompletedMissions.set(false);
     this.renderDefects();
+    this.renderMissions();
   }
 
-  protected toggleLayer(type: 'towers' | 'lines' | 'defects' | 'alerts'): void {
+  protected toggleLayer(type: 'towers' | 'lines' | 'defects' | 'alerts' | 'missions'): void {
     if (type === 'towers') {
       this.showTowersLayer.update((v) => !v);
       this.renderTowers();
@@ -901,6 +1115,9 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
     } else if (type === 'alerts') {
       this.showAlertsLayer.update((v) => !v);
       this.renderAlerts();
+    } else if (type === 'missions') {
+      this.showMissionsLayer.update((v) => !v);
+      this.renderMissions();
     }
   }
 
@@ -915,5 +1132,9 @@ export class GisMonitoring implements AfterViewInit, OnDestroy {
 
   protected navigateToReview(anomalyId: string): void {
     void this.router.navigate(['/ai-review', anomalyId]);
+  }
+
+  protected navigateToMission(missionId: string): void {
+    void this.router.navigate(['/missions', missionId]);
   }
 }

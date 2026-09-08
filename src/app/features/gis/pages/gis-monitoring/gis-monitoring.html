@@ -82,6 +82,12 @@
         <span>Cảnh báo:</span>
         <strong>{{ criticalAlertsCount() }}</strong>
       </div>
+      @if (canViewMissions()) {
+        <div class="metric-item metric-missions" title="Số lượng nhiệm vụ bay khả dụng">
+          <span>Nhiệm vụ:</span>
+          <strong>{{ activeMissionsCount() }}</strong>
+        </div>
+      }
     </div>
   </header>
 
@@ -148,8 +154,6 @@
     <section
       class="gis-selection-popup"
       aria-label="Chọn tài sản theo vùng"
-      (click)="$event.stopPropagation()"
-      (mousedown)="$event.stopPropagation()"
     >
       <header class="popup-head">
         <div class="popup-title-group">
@@ -421,6 +425,26 @@
             />
             <span>🔥 Cảnh báo khẩn cấp</span>
           </label>
+          @if (canViewMissions()) {
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                [checked]="showMissionsLayer()"
+                (change)="toggleLayer('missions')"
+              />
+              <span>📋 Nhiệm vụ bay</span>
+            </label>
+            @if (showMissionsLayer()) {
+              <label class="checkbox-row checkbox-sub-row">
+                <input
+                  type="checkbox"
+                  [checked]="includeCompletedMissions()"
+                  (change)="includeCompletedMissions.update(v => !v); renderMissions()"
+                />
+                <span class="sub-label">Hiển thị nhiệm vụ đã hoàn thành</span>
+              </label>
+            }
+          }
         </div>
       </div>
 
@@ -474,6 +498,16 @@
           <span class="legend-symbol sym-alert"></span>
           <span>Cảnh báo cháy / khẩn cấp</span>
         </div>
+        @if (canViewMissions()) {
+          <div class="legend-item">
+            <span class="legend-symbol sym-mission-planned"></span>
+            <span>Nhiệm vụ (Lên lịch)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-symbol sym-mission-inprogress"></span>
+            <span>Nhiệm vụ (Đang bay)</span>
+          </div>
+        }
       </div>
     </div>
   }
@@ -496,6 +530,7 @@
               @case ('tower') { Cột điện truyền tải }
               @case ('anomaly') { Sự cố khuyết tật AI }
               @case ('alert') { Cảnh báo khẩn cấp }
+              @case ('missionCluster') { Nhiệm vụ tại mục tiêu }
             }
           </span>
           <h3>
@@ -503,6 +538,7 @@
               @case ('tower') { {{ selected.data.towerCode }} }
               @case ('anomaly') { {{ selected.data.category }} }
               @case ('alert') { {{ selected.data.title }} }
+              @case ('missionCluster') { {{ selected.data.towerCode }} ({{ selected.data.missions.length }} nhiệm vụ) }
             }
           </h3>
         </div>
@@ -544,6 +580,57 @@
               <div style="font-size: 12px; color: #15803d;">Mức độ rủi ro: {{ selected.data.riskLevel }}</div>
             </div>
             <div class="score-text">{{ selected.data.healthScore }}/100</div>
+          </div>
+        } @else if (selected.type === 'missionCluster') {
+          <div class="mission-cluster-drawer-content">
+            <p class="cluster-desc">
+              Danh sách các nhiệm vụ bay kiểm tra mục tiêu tại vị trí <strong>{{ selected.data.towerCode }}</strong>:
+            </p>
+            <div class="mission-cards-list">
+              @for (m of selected.data.missions; track m.id) {
+                <div class="mission-card-item">
+                  <div class="card-top-row">
+                    <div class="mission-title-box">
+                      <span class="mission-code-badge">{{ m.missionCode }}</span>
+                      <strong>{{ m.title }}</strong>
+                    </div>
+                    <span class="mission-state-tag" [class]="missionStatusClass(m.status)">
+                      {{ missionStatusLabel(m.status) }}
+                    </span>
+                  </div>
+
+                  <div class="card-details-grid">
+                    <div class="detail-line">
+                      <span>Thời gian:</span>
+                      <strong>{{ (m.scheduledAt || m.createdAt) | date:'dd/MM/yyyy HH:mm' }}</strong>
+                    </div>
+                    <div class="detail-line">
+                      <span>Người phụ trách:</span>
+                      <strong>{{ m.assignedToUsername || 'Chưa phân công' }}</strong>
+                    </div>
+                    <div class="detail-line">
+                      <span>UAV / Drone:</span>
+                      <strong>{{ m.droneCode || 'Chưa gán UAV' }}</strong>
+                    </div>
+                    <div class="detail-line">
+                      <span>Số mục tiêu:</span>
+                      <strong>{{ m.targets.length || 1 }} tài sản</strong>
+                    </div>
+                  </div>
+
+                  <div class="card-actions-row">
+                    <button
+                      type="button"
+                      class="btn-open-mission"
+                      (click)="navigateToMission(m.id)"
+                    >
+                      <span nz-icon nzType="eye"></span>
+                      <span>Xem chi tiết nhiệm vụ</span>
+                    </button>
+                  </div>
+                </div>
+              }
+            </div>
           </div>
         } @else if (selected.type === 'anomaly') {
           @if (selected.data.imageUrl) {

@@ -191,6 +191,12 @@
       background: #fee2e2;
       color: #b91c1c;
     }
+
+    &.metric-missions {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
   }
 }
 
@@ -328,6 +334,16 @@
         cursor: pointer;
       }
     }
+
+    .checkbox-sub-row {
+      margin-left: 24px;
+      margin-top: -2px;
+
+      .sub-label {
+        font-size: 12px;
+        color: #64748b;
+      }
+    }
   }
 }
 
@@ -378,6 +394,8 @@
         &.sym-critical { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
         &.sym-high { background: #f59e0b; }
         &.sym-alert { background: #dc2626; border: 2px solid #fee2e2; }
+        &.sym-mission-planned { background: #eff6ff; border: 2px solid #2563eb; }
+        &.sym-mission-inprogress { background: #fffbeb; border: 2px solid #d97706; }
       }
     }
   }
@@ -545,11 +563,210 @@
 .custom-tower-marker,
 .custom-defect-marker,
 .custom-alert-marker,
+.custom-mission-badge,
 .confirmed-target-marker {
   /* Override leaflet's default div-icon white-background box */
   &.leaflet-div-icon {
     background: transparent;
     border: none;
+  }
+}
+
+/* ──────────────────────────────────────────────────────
+   Custom Mission Marker: Simple, Clean Bordered Badges
+   No gradient, no flashy graphics, clean solid border & number
+   ────────────────────────────────────────────────────── */
+.custom-mission-badge {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+
+  .badge-num {
+    line-height: 1;
+  }
+
+  &:hover {
+    transform: scale(1.2);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Planned / Scheduled: Simple solid border, clean light background */
+  &.state-planned {
+    background: #ffffff;
+    border: 2.5px solid #2563eb;
+    color: #1d4ed8;
+  }
+
+  /* InProgress / Executing: Simple solid amber/orange border */
+  &.state-inprogress {
+    background: #ffffff;
+    border: 2.5px solid #d97706;
+    color: #b45309;
+  }
+
+  /* Completed: Simple subtle neutral/green border */
+  &.state-completed {
+    background: #ffffff;
+    border: 2px solid #64748b;
+    color: #475569;
+  }
+
+  &.state-other {
+    background: #ffffff;
+    border: 2px solid #475569;
+    color: #334155;
+  }
+}
+
+/* Mission cluster cards in detail drawer */
+.mission-cluster-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  .cluster-desc {
+    margin: 0;
+    font-size: 12px;
+    color: #475569;
+    line-height: 1.4;
+  }
+
+  .mission-cards-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: calc(100vh - 350px);
+    overflow-y: auto;
+  }
+
+  .mission-card-item {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: border-color 0.15s ease;
+
+    &:hover {
+      border-color: #cbd5e1;
+    }
+
+    .card-top-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+
+      .mission-title-box {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+
+        .mission-code-badge {
+          font-size: 11px;
+          font-family: monospace;
+          color: #2563eb;
+          font-weight: 700;
+        }
+
+        strong {
+          font-size: 13px;
+          color: #0f172a;
+        }
+      }
+
+      .mission-state-tag {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        white-space: nowrap;
+
+        &.planned {
+          background: #eff6ff;
+          color: #1d4ed8;
+          border: 1px solid #bfdbfe;
+        }
+
+        &.inprogress {
+          background: #fffbeb;
+          color: #b45309;
+          border: 1px solid #fde68a;
+        }
+
+        &.completed {
+          background: #f1f5f9;
+          color: #475569;
+          border: 1px solid #e2e8f0;
+        }
+
+        &.other {
+          background: #f3f4f6;
+          color: #374151;
+          border: 1px solid #e5e7eb;
+        }
+      }
+    }
+
+    .card-details-grid {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      background: #ffffff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid #f1f5f9;
+
+      .detail-line {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+
+        span {
+          color: #64748b;
+        }
+
+        strong {
+          color: #1e293b;
+        }
+      }
+    }
+
+    .card-actions-row {
+      display: flex;
+
+      .btn-open-mission {
+        width: 100%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 12px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #ffffff;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+
+        &:hover {
+          background: #eff6ff;
+          border-color: #93c5fd;
+        }
+      }
+    }
   }
 }
 
