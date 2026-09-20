@@ -5,8 +5,8 @@
     <p class="review-subtitle">Tổng hợp báo cáo kiểm tra định kỳ, thống kê khuyết tật thiết bị và xuất dữ liệu báo cáo vận hành.</p>
   </div>
   <div class="actions">
-    <button type="button" class="button secondary" (click)="refreshReports()">
-      <span nz-icon nzType="reload"></span> Làm mới
+    <button type="button" class="button secondary" (click)="refreshReports()" [disabled]="isLoading()">
+      <span nz-icon [nzType]="isLoading() ? 'loading' : 'reload'"></span> Làm mới
     </button>
     <button type="button" class="button primary" (click)="openCreateModal()">
       <span nz-icon nzType="plus"></span> Lập báo cáo mới
@@ -15,13 +15,13 @@
 </section>
 
 @if (toastMessage(); as msg) {
-  <div class="toast-alert" role="status">
-    <span nz-icon nzType="check-circle" class="toast-icon"></span>
+  <div class="toast-alert" [class]="toastType()" role="status">
+    <span nz-icon [nzType]="toastType() === 'error' ? 'close-circle' : toastType() === 'info' ? 'info-circle' : 'check-circle'" class="toast-icon"></span>
     <span>{{ msg }}</span>
   </div>
 }
 
-<!-- Thanh thống kê số liệu tinh gọn (Chuẩn web quản trị VN) -->
+<!-- Thanh thống kê số liệu tổng hợp từ API -->
 <section class="reports-status-bar" aria-label="Thống kê báo cáo">
   <div class="status-item">
     <span class="status-label">Tổng số báo cáo</span>
@@ -30,21 +30,21 @@
   <div class="status-sep" aria-hidden="true"></div>
   <div class="status-item">
     <span class="status-label">Khuyết tật AI</span>
-    <strong class="status-value">{{ stats().defect }}</strong>
+    <strong class="status-value">{{ stats().byType.defect }}</strong>
   </div>
   <div class="status-sep" aria-hidden="true"></div>
   <div class="status-item">
     <span class="status-label">Kiểm tra định kỳ UAV</span>
-    <strong class="status-value">{{ stats().periodic }}</strong>
+    <strong class="status-value">{{ stats().byType.periodic }}</strong>
   </div>
   <div class="status-sep" aria-hidden="true"></div>
   <div class="status-item">
     <span class="status-label">Nhiệt & Hành lang</span>
-    <strong class="status-value">{{ stats().thermal + stats().corridor }}</strong>
+    <strong class="status-value">{{ (stats().byType.thermal || 0) + (stats().byType.corridor || 0) }}</strong>
   </div>
 </section>
 
-<!-- Bộ lọc và tìm kiếm -->
+<!-- Bộ lọc và tìm kiếm Server-side -->
 <section class="panel filters-panel">
   <div class="filters-grid">
     <div class="filter-group search-group">
@@ -54,9 +54,9 @@
         <input
           id="report-search"
           type="search"
-          placeholder="Tìm theo tiêu đề, mã số, tuyến đường dây, người lập..."
+          placeholder="Tìm theo tiêu đề, mã số báo cáo..."
           [value]="searchQuery()"
-          (input)="searchQuery.set($any($event.target).value)"
+          (input)="onSearchInput($any($event.target).value)"
         />
       </div>
     </div>
@@ -66,7 +66,7 @@
       <select
         id="report-type"
         [value]="selectedType()"
-        (change)="selectedType.set($any($event.target).value)"
+        (change)="onTypeChange($any($event.target).value)"
       >
         <option value="all">Tất cả loại báo cáo</option>
         <option value="defect">Khuyết tật AI</option>
@@ -81,7 +81,7 @@
       <select
         id="report-status"
         [value]="selectedStatus()"
-        (change)="selectedStatus.set($any($event.target).value)"
+        (change)="onStatusChange($any($event.target).value)"
       >
         <option value="all">Tất cả trạng thái</option>
         <option value="approved">Đã duyệt</option>
@@ -92,17 +92,22 @@
   </div>
 </section>
 
-<!-- Danh sách báo cáo -->
+<!-- Danh sách báo cáo kết nối API -->
 <section class="panel table-panel">
   <header class="table-header">
     <div>
       <p class="kicker">HỒ SƠ VẬN HÀNH</p>
       <h2>Danh mục báo cáo phân tích lưới điện</h2>
     </div>
-    <span class="record-badge">{{ filteredReports().length }} báo cáo</span>
+    <span class="record-badge">{{ totalItems() }} báo cáo</span>
   </header>
 
-  @if (filteredReports().length) {
+  @if (isLoading()) {
+    <div class="loading-state" aria-live="polite">
+      <span nz-icon nzType="loading" class="loading-spinner"></span>
+      <p>Đang đồng bộ dữ liệu báo cáo từ máy chủ...</p>
+    </div>
+  } @else if (reports().length) {
     <div class="table-scroll">
       <table>
         <caption class="sr-only">Danh sách báo cáo phân tích</caption>
@@ -118,7 +123,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (item of filteredReports(); track item.id) {
+          @for (item of reports(); track item.id) {
             <tr>
               <td>
                 <div class="report-title-cell">
@@ -141,7 +146,7 @@
                 <span class="date-text">{{ item.createdAt | date:'dd/MM/yyyy HH:mm' }}</span>
               </td>
               <td>
-                <span class="creator-name">{{ item.creator }}</span>
+                <span class="creator-name">{{ item.creatorName }}</span>
               </td>
               <td>
                 <span class="status-badge" [class]="item.status">{{ item.statusName }}</span>
@@ -151,18 +156,32 @@
                   <button
                     type="button"
                     class="btn-action-download pdf"
-                    title="Tải tệp PDF ({{ item.fileSizePdf }})"
+                    [title]="'Tải tệp PDF (' + item.fileSizePdfFormatted + ')'"
                     (click)="downloadReport(item, 'PDF')"
+                    [disabled]="isDownloading() === item.id + '-PDF'"
                   >
-                    <span nz-icon nzType="file-pdf"></span> PDF
+                    @if (isDownloading() === item.id + '-PDF') {
+                      <span nz-icon nzType="loading"></span>
+                    } @else {
+                      <span nz-icon nzType="file-pdf"></span>
+                    }
+                    <span>PDF</span>
+                    <span class="file-size-tag">{{ item.fileSizePdfFormatted }}</span>
                   </button>
                   <button
                     type="button"
                     class="btn-action-download excel"
-                    title="Tải tệp Excel ({{ item.fileSizeExcel }})"
+                    [title]="'Tải tệp Excel (' + item.fileSizeExcelFormatted + ')'"
                     (click)="downloadReport(item, 'EXCEL')"
+                    [disabled]="isDownloading() === item.id + '-EXCEL'"
                   >
-                    <span nz-icon nzType="file-excel"></span> Excel
+                    @if (isDownloading() === item.id + '-EXCEL') {
+                      <span nz-icon nzType="loading"></span>
+                    } @else {
+                      <span nz-icon nzType="file-excel"></span>
+                    }
+                    <span>Excel</span>
+                    <span class="file-size-tag">{{ item.fileSizeExcelFormatted }}</span>
                   </button>
                 </div>
               </td>
@@ -171,6 +190,34 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Thanh phân trang Server-side -->
+    <footer class="pagination-bar">
+      <div class="pagination-info">
+        Hiển thị trang <strong>{{ currentPage() }}</strong> / <strong>{{ totalPages() }}</strong> (Tổng cộng <strong>{{ totalItems() }}</strong> bản ghi)
+      </div>
+      <div class="pagination-controls">
+        <button
+          type="button"
+          class="btn-page"
+          [disabled]="currentPage() <= 1"
+          (click)="goToPage(currentPage() - 1)"
+          aria-label="Trang trước"
+        >
+          <span nz-icon nzType="left"></span> Trước
+        </button>
+        <span class="current-page-display">{{ currentPage() }}</span>
+        <button
+          type="button"
+          class="btn-page"
+          [disabled]="currentPage() >= totalPages()"
+          (click)="goToPage(currentPage() + 1)"
+          aria-label="Trang tiếp theo"
+        >
+          Sau <span nz-icon nzType="right"></span>
+        </button>
+      </div>
+    </footer>
   } @else {
     <div class="empty-state">
       <span nz-icon nzType="inbox" class="empty-icon"></span>
@@ -180,13 +227,13 @@
   }
 </section>
 
-<!-- Modal Lập báo cáo mới -->
+<!-- Modal Lập báo cáo mới với Tuyến/Trạm từ API thật -->
 @if (isCreateModalOpen()) {
   <div class="modal-backdrop" (click)="closeCreateModal()">
     <div class="modal-dialog" (click)="$event.stopPropagation()">
       <header class="modal-header">
         <h3>Lập báo cáo vận hành mới</h3>
-        <button type="button" class="btn-close" (click)="closeCreateModal()">✕</button>
+        <button type="button" class="btn-close" (click)="closeCreateModal()" [disabled]="isSubmitting()">✕</button>
       </header>
       <div class="modal-body">
         <div class="modal-field">
@@ -194,34 +241,100 @@
           <input
             id="new-title"
             type="text"
-            placeholder="Ví dụ: Báo cáo kiểm tra khuyết tật đường dây 500kV..."
-            [(ngModel)]="newReportTitle"
+            placeholder="Ví dụ: Báo cáo kiểm tra khuyết tật định kỳ đợt 9..."
+            [value]="newReportTitle()"
+            (input)="newReportTitle.set($any($event.target).value)"
           />
         </div>
+
         <div class="modal-field">
           <label for="new-type">Phân loại báo cáo</label>
-          <select id="new-type" [(ngModel)]="newReportType">
+          <select
+            id="new-type"
+            [value]="newReportType()"
+            (change)="newReportType.set($any($event.target).value)"
+          >
             <option value="defect">Khuyết tật AI</option>
             <option value="periodic">Kiểm tra định kỳ UAV</option>
             <option value="thermal">Nhiệt hồng ngoại</option>
             <option value="corridor">Hành lang tuyến</option>
           </select>
         </div>
+
         <div class="modal-field">
-          <label for="new-line">Tuyến đường dây / Trạm biến áp</label>
-          <select id="new-line" [(ngModel)]="newReportLine">
-            <option value="ĐZ 500kV Quảng Trạch - Dốc Sỏi">ĐZ 500kV Quảng Trạch - Dốc Sỏi</option>
-            <option value="ĐZ 220kV Hòa Bình - Nho Quan">ĐZ 220kV Hòa Bình - Nho Quan</option>
-            <option value="TBA 220kV Tây Hà Nội">TBA 220kV Tây Hà Nội</option>
-            <option value="ĐZ 500kV Thường Tín - Nho Quan">ĐZ 500kV Thường Tín - Nho Quan</option>
-            <option value="ĐZ 220kV Chèm - Tây Hà Nội">ĐZ 220kV Chèm - Tây Hà Nội</option>
-            <option value="ĐZ 110kV Hà Đông - Thanh Oai">ĐZ 110kV Hà Đông - Thanh Oai</option>
-          </select>
+          <label id="target-category-label">Đối tượng kiểm tra</label>
+          <div class="target-category-switch" role="radiogroup" aria-labelledby="target-category-label">
+            <button
+              type="button"
+              class="switch-btn"
+              [class.active]="targetCategory() === 'line'"
+              (click)="targetCategory.set('line')"
+            >
+              Đường dây truyền tải
+            </button>
+            <button
+              type="button"
+              class="switch-btn"
+              [class.active]="targetCategory() === 'substation'"
+              (click)="targetCategory.set('substation')"
+            >
+              Trạm biến áp
+            </button>
+          </div>
+        </div>
+
+        @if (targetCategory() === 'line') {
+          <div class="modal-field">
+            <label for="new-line">Chọn đường dây truyền tải</label>
+            <select
+              id="new-line"
+              [value]="selectedLineId()"
+              (change)="selectedLineId.set($any($event.target).value)"
+            >
+              @for (line of powerLines(); track line.id) {
+                <option [value]="line.id">
+                  {{ line.lineName }} @if (line.voltageLevel) { ({{ line.voltageLevel }}) }
+                </option>
+              }
+            </select>
+          </div>
+        } @else {
+          <div class="modal-field">
+            <label for="new-substation">Chọn trạm biến áp</label>
+            <select
+              id="new-substation"
+              [value]="selectedSubstationId()"
+              (change)="selectedSubstationId.set($any($event.target).value)"
+            >
+              @for (sub of substations(); track sub.id) {
+                <option [value]="sub.id">
+                  {{ sub.substationName }} @if (sub.voltageLevel) { ({{ sub.voltageLevel }}) }
+                </option>
+              }
+            </select>
+          </div>
+        }
+
+        <div class="modal-field">
+          <label for="new-desc">Ghi chú / Mô tả đợt kiểm tra</label>
+          <textarea
+            id="new-desc"
+            rows="2"
+            placeholder="Nội dung tóm tắt, phạm vi khoảng cột kiểm tra..."
+            [value]="newReportDescription()"
+            (input)="newReportDescription.set($any($event.target).value)"
+          ></textarea>
         </div>
       </div>
       <footer class="modal-footer">
-        <button type="button" class="button secondary" (click)="closeCreateModal()">Hủy</button>
-        <button type="button" class="button primary" (click)="createReport()">Tạo báo cáo</button>
+        <button type="button" class="button secondary" (click)="closeCreateModal()" [disabled]="isSubmitting()">Hủy</button>
+        <button type="button" class="button primary" (click)="createReport()" [disabled]="isSubmitting()">
+          @if (isSubmitting()) {
+            <span nz-icon nzType="loading"></span> Đang tạo...
+          } @else {
+            <span nz-icon nzType="plus"></span> Tạo báo cáo
+          }
+        </button>
       </footer>
     </div>
   </div>
