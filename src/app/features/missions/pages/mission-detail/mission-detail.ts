@@ -18,9 +18,13 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import * as L from 'leaflet';
 import { catchError, finalize, of } from 'rxjs';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { Mission } from '../../../../models/missions.models';
+import { Mission, MissionCommunicationLog } from '../../../../models/missions.models';
 import { AssetManagementApi, DetectionReviewDecision, MissionAiDetection } from '../../../assets/data-access/asset-management-api';
-import { AiAnalysisStatusChangedEvent, NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
+import {
+  AiAnalysisStatusChangedEvent,
+  MissionLifecycleRealtimeEvent,
+  NotificationsRealtime,
+} from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
 import { NotificationsStore } from '../../../notifications/data-access/notifications-store';
 import { Auth } from '../../../../core/auth/auth';
@@ -446,6 +450,9 @@ export class MissionDetail {
     this.realtime.aiAnalysisStatus$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleAiAnalysisStatus(event));
+    this.realtime.missionEvents$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => this.handleMissionRealtimeEvent(event));
 
     const timer = setInterval(() => this.currentTime.set(Date.now()), 30000);
 
@@ -970,6 +977,15 @@ export class MissionDetail {
             createdAt: new Date().toISOString(),
             isRead: false,
           });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'CONFIRMED',
+            status: 'CONFIRMED',
+            actorRole: 'INSPECTOR',
+            actorName: updated.assignedToUsername || 'Inspector',
+            reason: 'Inspector xác nhận tiếp nhận nhiệm vụ.',
+            timestamp: new Date().toISOString(),
+          });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
       });
@@ -1011,6 +1027,15 @@ export class MissionDetail {
             referenceId: updated.id,
             createdAt: new Date().toISOString(),
             isRead: false,
+          });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'POSTPONED',
+            status: 'POSTPONED',
+            reason,
+            actorRole: 'INSPECTOR',
+            actorName: updated.assignedToUsername || 'Inspector',
+            timestamp: new Date().toISOString(),
           });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
@@ -1054,6 +1079,15 @@ export class MissionDetail {
             createdAt: new Date().toISOString(),
             isRead: false,
           });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'SUSPENDED',
+            status: 'SUSPENDED',
+            reason,
+            actorRole: 'MANAGER',
+            actorName: updated.managerUsername || 'Quản lý vận hành',
+            timestamp: new Date().toISOString(),
+          });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
       });
@@ -1084,6 +1118,14 @@ export class MissionDetail {
             referenceId: updated.id,
             createdAt: new Date().toISOString(),
             isRead: false,
+          });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'RESUMED',
+            status: 'CONFIRMED',
+            actorRole: 'MANAGER',
+            actorName: updated.managerUsername || 'Quản lý vận hành',
+            timestamp: new Date().toISOString(),
           });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
@@ -1127,6 +1169,15 @@ export class MissionDetail {
             createdAt: new Date().toISOString(),
             isRead: false,
           });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'CANCELLED',
+            status: 'Cancelled',
+            reason,
+            actorRole: 'MANAGER',
+            actorName: updated.managerUsername || 'Quản lý vận hành',
+            timestamp: new Date().toISOString(),
+          });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
       });
@@ -1157,6 +1208,14 @@ export class MissionDetail {
             referenceId: updated.id,
             createdAt: new Date().toISOString(),
             isRead: false,
+          });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'REMINDER',
+            reason: 'Yêu cầu tiếp nhận nhiệm vụ khẩn cấp',
+            actorRole: 'MANAGER',
+            actorName: updated.managerUsername || 'Quản lý vận hành',
+            timestamp: new Date().toISOString(),
           });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
@@ -1193,6 +1252,14 @@ export class MissionDetail {
             referenceId: updated.id,
             createdAt: new Date().toISOString(),
             isRead: false,
+          });
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'COMMUNICATION',
+            actorRole: role,
+            actorName: senderName,
+            message: content,
+            timestamp: new Date().toISOString(),
           });
         },
         error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
@@ -1457,6 +1524,65 @@ export class MissionDetail {
     }
 
     this.uploadMessage.set('AI đang xử lý media đã upload.');
+  }
+
+  private handleMissionRealtimeEvent(event: MissionLifecycleRealtimeEvent): void {
+    const currentMission = this.mission();
+    if (!currentMission || (event.missionId !== currentMission.id && event.missionId !== currentMission.missionCode)) {
+      return;
+    }
+
+    if (event.type === 'CONFIRMED') {
+      this.mission.update((curr) => curr ? {
+        ...curr,
+        status: 'CONFIRMED',
+        confirmedAt: event.timestamp || new Date().toISOString(),
+      } : null);
+      this.actionMessage.set(`[THỰC THỜI] Phi công ${event.actorName || 'Inspector'} đã xác nhận tiếp nhận nhiệm vụ! Sẵn sàng bay.`);
+    } else if (event.type === 'POSTPONED') {
+      this.mission.update((curr) => curr ? {
+        ...curr,
+        status: 'POSTPONED',
+        postponeReason: event.reason || curr.postponeReason,
+      } : null);
+      this.actionMessage.set(`[CẢNH BÁO THỰC THỜI] Phi công ${event.actorName || 'Inspector'} yêu cầu hoãn nhiệm vụ: "${event.reason || ''}".`);
+    } else if (event.type === 'SUSPENDED') {
+      this.mission.update((curr) => curr ? {
+        ...curr,
+        status: 'SUSPENDED',
+        suspendedReason: event.reason || curr.suspendedReason,
+      } : null);
+      this.actionMessage.set(`[LỆNH ĐÌNH CHỈ] Nhiệm vụ tạm đình chỉ: ${event.reason || ''}`);
+    } else if (event.type === 'RESUMED') {
+      this.mission.update((curr) => curr ? { ...curr, status: 'CONFIRMED' } : null);
+      this.actionMessage.set('[THÔNG BÁO] Nhiệm vụ đã được khôi phục, sẵn sàng bay.');
+    } else if (event.type === 'CANCELLED') {
+      this.mission.update((curr) => curr ? { ...curr, status: 'Cancelled' } : null);
+      this.actionMessage.set(`[HỦY BỎ] Nhiệm vụ đã bị hủy: ${event.reason || ''}`);
+    } else if (event.type === 'COMMUNICATION') {
+      if (event.message) {
+        const newLog: MissionCommunicationLog = {
+          id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          senderId: event.actorId || 'user',
+          senderRole: (event.actorRole as 'MANAGER' | 'INSPECTOR') || 'INSPECTOR',
+          senderName: event.actorName || 'Phi công',
+          type: 'MESSAGE',
+          content: event.message,
+          timestamp: event.timestamp || new Date().toISOString(),
+        };
+        this.mission.update((curr) => {
+          if (!curr) return null;
+          const existing = curr.communicationLogs ?? [];
+          if (existing.some((l) => l.content === newLog.content && Math.abs(new Date(l.timestamp).getTime() - new Date(newLog.timestamp).getTime()) < 3000)) {
+            return curr;
+          }
+          return {
+            ...curr,
+            communicationLogs: [...existing, newLog],
+          };
+        });
+      }
+    }
   }
 
   private applyUploadResponse(body: unknown): void {

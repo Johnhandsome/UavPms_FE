@@ -7,6 +7,7 @@ import { Subject, debounceTime, distinctUntilChanged, finalize, forkJoin, map, o
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { Auth } from '../../../../core/auth/auth';
 import { Mission, MissionPage } from '../../../../models/missions.models';
+import { NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
 
 @Component({
@@ -19,6 +20,7 @@ import { MissionsApi } from '../../data-access/missions-api';
 })
 export class MissionList {
   private readonly api = inject(MissionsApi);
+  private readonly realtime = inject(NotificationsRealtime);
   private readonly auth = inject(Auth);
   private readonly destroyRef = inject(DestroyRef);
   private readonly searchInput = new Subject<string>();
@@ -59,6 +61,50 @@ export class MissionList {
         this.search.set(value);
         this.applyFilters();
       });
+
+    this.realtime.connect();
+    this.realtime.missionEvents$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        if (event.type === 'DISPATCHED') {
+          this.load();
+          return;
+        }
+
+        // Live update status in the table
+        this.response.update((curr) => {
+          const index = curr.items.findIndex(
+            (m) => m.id === event.missionId || m.missionCode === event.missionId,
+          );
+          if (index === -1) return curr;
+          const newItems = [...curr.items];
+          const target = newItems[index];
+          let nextStatus = target.status;
+          if (event.type === 'CONFIRMED' || event.type === 'RESUMED') nextStatus = 'CONFIRMED';
+          else if (event.type === 'POSTPONED') nextStatus = 'POSTPONED';
+          else if (event.type === 'SUSPENDED') nextStatus = 'SUSPENDED';
+          else if (event.type === 'CANCELLED') nextStatus = 'Cancelled';
+          newItems[index] = { ...target, status: nextStatus };
+          return { ...curr, items: newItems };
+        });
+
+        // Live update stats cards
+        this.statsItems.update((items) => {
+          const index = items.findIndex(
+            (m) => m.id === event.missionId || m.missionCode === event.missionId,
+          );
+          if (index === -1) return items;
+          const newItems = [...items];
+          let nextStatus = newItems[index].status;
+          if (event.type === 'CONFIRMED' || event.type === 'RESUMED') nextStatus = 'CONFIRMED';
+          else if (event.type === 'POSTPONED') nextStatus = 'POSTPONED';
+          else if (event.type === 'SUSPENDED') nextStatus = 'SUSPENDED';
+          else if (event.type === 'CANCELLED') nextStatus = 'Cancelled';
+          newItems[index] = { ...newItems[index], status: nextStatus };
+          return newItems;
+        });
+      });
+
     this.load();
   }
 

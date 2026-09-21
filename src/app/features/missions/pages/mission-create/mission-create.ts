@@ -24,6 +24,7 @@ import { DroneDto } from '../../../../models/drones.models';
 import { MissionCreateRequest } from '../../../../models/missions.models';
 import { PersonnelCandidate, PreMissionAssessment, UavCandidate } from '../../../../models/pre-mission.models';
 import { UserRecord } from '../../../../models/users.models';
+import { NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { NotificationsStore } from '../../../notifications/data-access/notifications-store';
 import { PreMissionApi } from '../../../pre-mission/data-access/pre-mission-api';
 import { UsersApi } from '../../../users/data-access/users-api';
@@ -42,6 +43,7 @@ export type DeadlinePreset = '2h' | '6h' | '12h' | '24h' | 'custom';
 })
 export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
   private readonly api = inject(MissionsApi);
+  private readonly realtime = inject(NotificationsRealtime);
   private readonly preMissionApi = inject(PreMissionApi);
   private readonly dronesApi = inject(DronesApi);
   private readonly usersApi = inject(UsersApi);
@@ -633,6 +635,18 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
               isRead: false,
             });
           }
+
+          // Broadcast real-time mission dispatch event across tabs / roles
+          this.realtime.broadcastMissionEvent({
+            missionId: mission.id,
+            type: 'DISPATCHED',
+            status: 'PENDING_CONFIRMATION',
+            actorRole: 'MANAGER',
+            actorName: this.currentUser()?.fullName || 'Quản lý vận hành',
+            managerInstructions: f.managerInstructions,
+            confirmationDeadline: f.confirmationDeadline,
+            timestamp: new Date().toISOString(),
+          });
 
           // Mark assessment consumed
           if (ass?.id) {

@@ -3,6 +3,7 @@ import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } fro
 import { Subject } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { Auth } from '../../../core/auth/auth';
+import { Mission, MissionCommunicationLog } from '../../../models/missions.models';
 import { AppNotification } from '../../../models/notification.models';
 import { normalizeNotification } from './notifications-api';
 
@@ -23,6 +24,35 @@ export interface AiAnalysisStatusChangedEvent {
   readonly completedAt: string;
 }
 
+export type MissionLifecycleEventType =
+  | 'CONFIRMED'
+  | 'DISPATCHED'
+  | 'SUSPENDED'
+  | 'POSTPONED'
+  | 'RESUMED'
+  | 'CANCELLED'
+  | 'REMINDER'
+  | 'COMMUNICATION'
+  | 'OVERDUE';
+
+export interface MissionLifecycleRealtimeEvent {
+  readonly missionId: string;
+  readonly type: MissionLifecycleEventType;
+  readonly status?: string;
+  readonly confirmationDeadline?: string;
+  readonly managerInstructions?: string;
+  readonly mission?: Partial<Mission>;
+  readonly actorId?: string;
+  readonly actorName?: string;
+  readonly actorRole?: 'MANAGER' | 'INSPECTOR' | 'SYSTEM';
+  readonly reason?: string;
+  readonly message?: string;
+  readonly log?: MissionCommunicationLog;
+  readonly timestamp: string;
+}
+
+const MF02_BROADCAST_CHANNEL = 'uavpms_mf02_realtime_bus';
+
 @Injectable({
   providedIn: 'root',
 })
@@ -31,13 +61,54 @@ export class NotificationsRealtime {
   private readonly zone = inject(NgZone);
   private readonly notificationSubject = new Subject<AppNotification>();
   private readonly aiAnalysisStatusSubject = new Subject<AiAnalysisStatusChangedEvent>();
+  private readonly missionEventsSubject = new Subject<MissionLifecycleRealtimeEvent>();
   private readonly statusSubject = new Subject<'connected' | 'disconnected' | 'reconnecting'>();
+
   private connection: HubConnection | null = null;
   private starting: Promise<void> | null = null;
+  private broadcastChannel: BroadcastChannel | null = null;
 
   readonly notifications$ = this.notificationSubject.asObservable();
   readonly aiAnalysisStatus$ = this.aiAnalysisStatusSubject.asObservable();
+  readonly missionEvents$ = this.missionEventsSubject.asObservable();
   readonly status$ = this.statusSubject.asObservable();
+
+  constructor() {
+    this.initBroadcastChannel();
+  }
+
+  private initBroadcastChannel(): void {
+    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
+    try {
+      this.broadcastChannel = new BroadcastChannel(MF02_BROADCAST_CHANNEL);
+      this.broadcastChannel.onmessage = (event: MessageEvent<MissionLifecycleRealtimeEvent>) => {
+        if (event.data && event.data.missionId && event.data.type) {
+          this.zone.run(() => this.missionEventsSubject.next(event.data));
+        }
+      };
+    } catch {
+      // Ignore broadcast channel init failure
+    }
+  }
+
+  broadcastMissionEvent(event: MissionLifecycleRealtimeEvent): void {
+    // 1. Emit locally on current tab
+    this.zone.run(() => this.missionEventsSubject.next(event));
+
+    // 2. Broadcast across other tabs on same device (instant <10ms sync)
+    try {
+      this.broadcastChannel?.postMessage(event);
+    } catch {
+      // Ignore postMessage failure
+    }
+
+    // 3. Emit via SignalR Hub WebSocket to server and other network clients
+    if (this.connection && this.connection.state === HubConnectionState.Connected) {
+      this.connection.send('BroadcastMissionLifecycle', event).catch(() => {
+        // Fallback or ignore if server method doesn't exist
+      });
+    }
+  }
 
   connect(): void {
     if (this.connection?.state === HubConnectionState.Connected || this.starting) return;
@@ -57,6 +128,10 @@ export class NotificationsRealtime {
     this.connection = null;
     this.starting = null;
     void connection?.stop();
+    if (this.broadcastChannel) {
+      this.broadcastChannel.close();
+      this.broadcastChannel = null;
+    }
   }
 
   private buildConnection(): HubConnection {
@@ -75,9 +150,34 @@ export class NotificationsRealtime {
     connection.on('NotificationReceived', receive);
     connection.on('NewNotification', receive);
     connection.on('notification', receive);
+
+    // AI Status handler
     connection.on('AiAnalysisStatusChanged', (payload: unknown) => {
       this.zone.run(() => this.aiAnalysisStatusSubject.next(normalizeAiAnalysisStatus(payload)));
     });
+
+    // MF02 Lifecycle & Dispatch Real-time handlers
+    const emitLifecycle = (type: MissionLifecycleEventType, payload: unknown) => {
+      const parsed = normalizeMissionLifecycleEvent(type, payload);
+      this.zone.run(() => this.missionEventsSubject.next(parsed));
+    };
+
+    connection.on('MissionLifecycleChanged', (payload: unknown) => {
+      const data = record(payload);
+      const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
+      emitLifecycle(type, payload);
+    });
+
+    connection.on('MissionConfirmed', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('MissionDispatched', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('MissionSuspended', (payload: unknown) => emitLifecycle('SUSPENDED', payload));
+    connection.on('MissionPostponed', (payload: unknown) => emitLifecycle('POSTPONED', payload));
+    connection.on('MissionResumed', (payload: unknown) => emitLifecycle('RESUMED', payload));
+    connection.on('MissionCancelled', (payload: unknown) => emitLifecycle('CANCELLED', payload));
+    connection.on('MissionCommunicationReceived', (payload: unknown) => emitLifecycle('COMMUNICATION', payload));
+    connection.on('MissionReminderSent', (payload: unknown) => emitLifecycle('REMINDER', payload));
+    connection.on('MissionConfirmationOverdue', (payload: unknown) => emitLifecycle('OVERDUE', payload));
+
     connection.onreconnecting(() => this.zone.run(() => this.statusSubject.next('reconnecting')));
     connection.onreconnected(() => this.zone.run(() => this.statusSubject.next('connected')));
     connection.onclose(() => this.zone.run(() => this.statusSubject.next('disconnected')));
@@ -90,7 +190,8 @@ const record = (value: unknown): Record<string, unknown> =>
 const pick = (source: Record<string, unknown>, ...keys: string[]) =>
   keys.map((key) => source[key]).find((value) => value !== undefined && value !== null);
 
-const stringValue = (value: unknown) => value === undefined || value === null ? '' : String(value);
+const stringValue = (value: unknown, fallback = '') =>
+  value === undefined || value === null ? fallback : String(value);
 
 const numberValue = (value: unknown) => Number(value ?? 0) || 0;
 
@@ -111,3 +212,57 @@ const normalizeAiAnalysisStatus = (payload: unknown): AiAnalysisStatusChangedEve
     completedAt: stringValue(pick(source, 'completedAt', 'CompletedAt')),
   };
 };
+
+function normalizeMissionLifecycleEvent(
+  defaultType: MissionLifecycleEventType,
+  payload: unknown
+): MissionLifecycleRealtimeEvent {
+  const source = record(payload);
+  const type = (stringValue(pick(source, 'type', 'Type')).toUpperCase() as MissionLifecycleEventType) || defaultType;
+  const missionId = stringValue(pick(source, 'missionId', 'MissionId', 'id', 'Id'));
+  const actorRole = (stringValue(pick(source, 'actorRole', 'ActorRole', 'senderRole', 'SenderRole')).toUpperCase() as 'MANAGER' | 'INSPECTOR' | 'SYSTEM') || undefined;
+  const actorName = stringValue(pick(source, 'actorName', 'ActorName', 'senderName', 'SenderName')) || undefined;
+  const reason = stringValue(pick(source, 'reason', 'Reason')) || undefined;
+  const message = stringValue(pick(source, 'message', 'Message', 'content', 'Content')) || undefined;
+  const timestamp = stringValue(pick(source, 'timestamp', 'Timestamp'), new Date().toISOString());
+
+  let log: MissionCommunicationLog | undefined = undefined;
+  if (source['log'] && typeof source['log'] === 'object') {
+    const l = record(source['log']);
+    log = {
+      id: stringValue(l['id'], `log-${Date.now()}`),
+      senderId: stringValue(l['senderId'], 'user'),
+      senderName: stringValue(l['senderName'], actorName || 'Hệ thống'),
+      senderRole: (stringValue(l['senderRole']).toUpperCase() as 'MANAGER' | 'INSPECTOR' | 'SYSTEM') || 'SYSTEM',
+      type: (stringValue(l['type']).toUpperCase() as any) || 'DISPATCH',
+      content: stringValue(l['content'], message || ''),
+      timestamp: stringValue(l['timestamp'], timestamp),
+    };
+  } else if (message) {
+    log = {
+      id: `log-${Date.now()}`,
+      senderId: stringValue(pick(source, 'actorId', 'ActorId'), 'user'),
+      senderName: actorName || (actorRole === 'MANAGER' ? 'Quản lý vận hành' : 'Thanh tra viên'),
+      senderRole: actorRole || 'SYSTEM',
+      type: type === 'CONFIRMED' ? 'CONFIRM' : type === 'REMINDER' ? 'REMINDER' : type === 'SUSPENDED' ? 'SUSPEND' : type === 'POSTPONED' ? 'POSTPONE' : 'DISPATCH',
+      content: message,
+      timestamp,
+    };
+  }
+
+  return {
+    missionId,
+    type,
+    status: stringValue(pick(source, 'status', 'Status')) || undefined,
+    confirmationDeadline: stringValue(pick(source, 'confirmationDeadline', 'ConfirmationDeadline')) || undefined,
+    managerInstructions: stringValue(pick(source, 'managerInstructions', 'ManagerInstructions')) || undefined,
+    actorId: stringValue(pick(source, 'actorId', 'ActorId')) || undefined,
+    actorName,
+    actorRole,
+    reason,
+    message,
+    log,
+    timestamp,
+    mission: source['mission'] && typeof source['mission'] === 'object' ? (source['mission'] as Partial<Mission>) : undefined,
+  };
+}

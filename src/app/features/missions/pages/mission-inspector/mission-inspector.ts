@@ -16,6 +16,7 @@ import { ActivatedRoute, RouterLink } from '@angular/router';
 import * as L from 'leaflet';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { Mission } from '../../../../models/missions.models';
+import { NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
 
 @Component({
@@ -28,6 +29,7 @@ import { MissionsApi } from '../../data-access/missions-api';
 })
 export class MissionInspector {
   private readonly api = inject(MissionsApi);
+  private readonly realtime = inject(NotificationsRealtime);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('inspectorMap');
@@ -111,6 +113,35 @@ export class MissionInspector {
       this.cleanupMap();
     });
 
+    this.realtime.connect();
+    this.realtime.missionEvents$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        const m = this.mission();
+        if (!m || (event.missionId !== m.id && event.missionId !== m.missionCode)) return;
+
+        if (event.type === 'SUSPENDED') {
+          this.mission.update((curr) => curr ? {
+            ...curr,
+            status: 'SUSPENDED',
+            suspendedReason: event.reason || curr.suspendedReason,
+          } : null);
+          this.actionMessage.set(`[CẢNH BÁO KHẨN CẤP] Quản lý đã tạm đình chỉ bay: ${event.reason || 'Kiểm tra an toàn.'}`);
+        } else if (event.type === 'RESUMED') {
+          this.mission.update((curr) => curr ? { ...curr, status: 'CONFIRMED' } : null);
+          this.actionMessage.set('[THÔNG BÁO] Quản lý đã dỡ bỏ lệnh tạm đình chỉ. Bạn có thể tiếp tục nhiệm vụ.');
+        } else if (event.type === 'CANCELLED') {
+          this.mission.update((curr) => curr ? { ...curr, status: 'Cancelled' } : null);
+          this.actionMessage.set(`[HỦY BỎ] Nhiệm vụ đã bị hủy bởi Quản lý: ${event.reason || ''}`);
+        } else if (event.type === 'REMINDER') {
+          this.actionMessage.set('[NHẮC NHỞ KHẨN] Quản lý yêu cầu bạn xác nhận nhiệm vụ ngay lập tức!');
+        } else if (event.type === 'COMMUNICATION') {
+          if (event.message && event.actorRole !== 'INSPECTOR') {
+            this.actionMessage.set(`[TIN NHẮN TỪ QUẢN LÝ] ${event.actorName}: ${event.message}`);
+          }
+        }
+      });
+
     this.api
       .get(id)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -139,6 +170,17 @@ export class MissionInspector {
           this.mission.set(updated);
           this.actionBusy.set(false);
           this.actionMessage.set('Đã xác nhận tiếp nhận nhiệm vụ thành công. Trạng thái: Sẵn sàng bay.');
+
+          // Broadcast real-time event to Manager console & Mission lists
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'CONFIRMED',
+            status: 'CONFIRMED',
+            actorRole: 'INSPECTOR',
+            actorName: updated.assignedToUsername || 'Phi công phụ trách',
+            reason: 'Phi công xác nhận sẵn sàng bay khảo sát lưới điện.',
+            timestamp: new Date().toISOString(),
+          });
         },
         error: () => {
           this.actionBusy.set(false);
@@ -170,6 +212,17 @@ export class MissionInspector {
           this.actionBusy.set(false);
           this.showPostponeModal.set(false);
           this.actionMessage.set('Đã gửi yêu cầu dời lịch / hoãn nhiệm vụ tới Quản lý vận hành.');
+
+          // Broadcast real-time event to Manager console
+          this.realtime.broadcastMissionEvent({
+            missionId: updated.id,
+            type: 'POSTPONED',
+            status: 'POSTPONED',
+            reason,
+            actorRole: 'INSPECTOR',
+            actorName: updated.assignedToUsername || 'Phi công phụ trách',
+            timestamp: new Date().toISOString(),
+          });
         },
         error: () => {
           this.actionBusy.set(false);
