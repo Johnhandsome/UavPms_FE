@@ -152,7 +152,7 @@ export class NotificationsStore {
     if (this.selectedState()?.id === id) this.selectedState.update((item) => (item ? { ...item, ...patch } : item));
   }
 
-  private upsert(notification: AppNotification): void {
+  upsert(notification: AppNotification): void {
     this.notificationsState.update((items) => {
       const exists = items.some((item) => item.id === notification.id);
       return sortNotifications(exists ? items.map((item) => (item.id === notification.id ? notification : item)) : [notification, ...items], this.filters().sort);

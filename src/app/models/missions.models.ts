@@ -1,4 +1,27 @@
-export type MissionStatus = 'Draft' | 'Assigned' | 'Preparing' | 'Ready' | 'InProgress' | 'Completed' | 'Cancelled' | string;
+export type MissionStatus =
+  | 'Draft'
+  | 'PENDING_CONFIRMATION'
+  | 'CONFIRMED'
+  | 'Assigned'
+  | 'Preparing'
+  | 'Ready'
+  | 'InProgress'
+  | 'POSTPONED'
+  | 'SUSPENDED'
+  | 'Completed'
+  | 'Cancelled'
+  | string;
+
+export interface MissionCommunicationLog {
+  readonly id: string;
+  readonly senderId: string;
+  readonly senderName: string;
+  readonly senderRole: 'MANAGER' | 'INSPECTOR' | 'SYSTEM';
+  readonly type: 'DISPATCH' | 'CONFIRM' | 'POSTPONE' | 'SUSPEND' | 'RESUME' | 'CANCEL' | 'REMINDER' | 'MESSAGE';
+  readonly content: string;
+  readonly timestamp: string;
+  readonly metadata?: Record<string, unknown>;
+}
 
 export interface Mission {
   readonly id: string;
@@ -26,6 +49,14 @@ export interface Mission {
   readonly actualCompleted?: string | null;
   readonly boundaryWkt?: string | null;
   readonly team?: readonly MissionAssignment[];
+  readonly confirmationDeadline?: string | null;
+  readonly managerInstructions?: string | null;
+  readonly postponeReason?: string | null;
+  readonly suspendedReason?: string | null;
+  readonly cancellationReason?: string | null;
+  readonly sourceAssessmentId?: string | null;
+  readonly priority?: 'Urgent' | 'High' | 'Medium' | 'Normal' | 'Low' | string;
+  readonly communicationLogs?: readonly MissionCommunicationLog[];
 }
 
 export interface MissionPage {
@@ -59,6 +90,10 @@ export interface MissionCreateRequest {
   readonly targetAssetIds: readonly string[];
   readonly boundaryWkt: string;
   readonly routeData?: string;
+  readonly confirmationDeadline?: string;
+  readonly managerInstructions?: string;
+  readonly sourceAssessmentId?: string;
+  readonly priority?: string;
 }
 
 export interface MissionAssignment {
