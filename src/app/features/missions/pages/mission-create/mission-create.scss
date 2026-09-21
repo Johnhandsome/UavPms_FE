@@ -1,1297 +1,319 @@
-@use '../mission-page';
-
 :host {
   display: block;
   width: 100%;
 }
 
-.mission-create-wizard {
+.mission-dispatch-page {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
   width: 100%;
-  color: #0b1c30;
-  padding: 0;
+  min-height: 100%;
+  padding-bottom: 48px;
 }
 
-/* EVN Page Header */
-.mission-create-wizard .page-header {
-  min-height: 38px;
-  min-height: auto;
-  margin: 0 0 24px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-
-  .page-breadcrumb {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 0 4px 0;
-    color: #64748b;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-
-    span {
-      color: #64748b;
-    }
-
-    strong {
-      color: #10387d;
-      font-weight: 700;
-    }
-  }
-
-  .page-title {
-    margin: 4px 0 4px 0;
-    font-size: 22px;
-    font-weight: 700;
-    color: #0f2952;
-    line-height: 1.25;
-    letter-spacing: -0.01em;
-  }
-
-  .page-subtitle {
-    display: block;
-    margin: 0;
-    color: #526b82;
-    font-size: 13px;
-    line-height: 1.4;
-    font-weight: 400;
-  }
-}
-
-/* Linked Assessment Source Banner (MF01 -> MF02) */
-.assessment-source-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 4px 10px;
-  background: #e6f2fb;
+.evn-panel {
   border: 1px solid #9fc3e4;
-  font-size: 11px;
-  color: #173b70;
-
-  .banner-icon {
-    color: #15803d;
-    font-size: 13px;
-  }
-
-  .banner-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .banner-code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    font-weight: 700;
-    color: #1d4f91;
-    text-decoration: underline;
-  }
-
-  .banner-tag {
-    padding: 1px 6px;
-    border-radius: 2px;
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-
-    &.success {
-      background: #dcfce7;
-      color: #15803d;
-      border: 1px solid #86efac;
-    }
-  }
-
-  .banner-scope {
-    color: #475569;
-  }
-}
-
-/* EVN 6-Stage Stepper Navigation */
-.wizard-stepper {
-  display: flex;
-  align-items: center;
-  background: #eaf3fb;
-  padding: 3px 6px;
-  border-radius: 0;
-  border: 1px solid #9fc3e4;
-  box-shadow: none;
-  overflow-x: auto;
-  gap: 4px;
-  min-height: 34px;
-
-  .step-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: transparent;
-    border: 1px solid transparent;
-    cursor: pointer;
-    padding: 3px 8px;
-    border-radius: 2px;
-    transition: all 0.15s ease;
-    white-space: nowrap;
-
-    .step-num {
-      width: 18px;
-      height: 18px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 2px;
-      background: #ffffff;
-      border: 1px solid #9fc3e4;
-      color: #174f83;
-      font-size: 10px;
-      font-weight: 700;
-    }
-
-    .step-label {
-      font-size: 11px;
-      font-weight: 600;
-      color: #174f83;
-    }
-
-    &:hover:not(:disabled) {
-      background: #d9edf9;
-    }
-
-    &.active {
-      background: #1d4f91;
-      border-color: #163f75;
-
-      .step-num {
-        background: #ffffff;
-        color: #1d4f91;
-        border-color: #ffffff;
-      }
-
-      .step-label {
-        color: #ffffff;
-        font-weight: 700;
-      }
-    }
-
-    &.completed {
-      .step-num {
-        background: #dcfce7;
-        color: #15803d;
-        border-color: #86efac;
-      }
-
-      .step-label {
-        color: #15803d;
-        font-weight: 600;
-      }
-    }
-  }
-
-  .step-connector {
-    flex: 1;
-    min-width: 8px;
-    height: 1px;
-    background: #9fc3e4;
-  }
-}
-
-/* EVN Wizard Cards */
-.wizard-card {
   background: #ffffff;
-  border: 1px solid #9fc3e4;
-  border-radius: 0;
-  padding: 0;
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  border-radius: 4px;
+  overflow: hidden;
 
-  .card-header-block {
-    height: 30px;
-    padding: 0 10px;
+  .panel-header {
+    min-height: 44px;
+    height: auto;
+    padding: 8px 12px;
+    box-sizing: border-box;
     background: #d9edf9;
     border-bottom: 1px solid #9fc3e4;
     display: flex;
     align-items: center;
     justify-content: space-between;
-
-    h2 {
-      margin: 0;
-      font-size: 12px;
-      font-weight: 700;
-      color: #174f83;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-
-    .section-desc {
-      margin: 0;
-      font-size: 11px;
-      color: #475569;
-
-      .note-emphasis {
-        color: #b45309;
-        font-weight: 600;
-      }
-    }
-  }
-}
-
-/* Compact Form Fields */
-.form-grid-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px 14px;
-  padding: 10px 12px;
-
-  .field-item {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    &--full {
-      grid-column: 1 / -1;
-    }
-
-    .field-label {
-      font-size: 11px;
-      font-weight: 600;
-      color: #174f83;
-
-      .required-star {
-        color: #dc2626;
-      }
-    }
-
-    .form-input,
-    .form-select,
-    .form-textarea {
-      width: 100%;
-      height: 26px;
-      min-height: 26px;
-      padding: 2px 8px;
-      font-size: 11px;
-      border: 1px solid #9fc3e4;
-      border-radius: 2px;
-      background: #ffffff;
-      color: #0b1c30;
-      box-sizing: border-box;
-
-      &:focus {
-        outline: none;
-        border-color: #1d4f91;
-      }
-    }
-
-    .form-textarea {
-      height: auto;
-      min-height: 56px;
-      padding: 4px 8px;
-      resize: vertical;
-    }
-
-    .field-hint {
-      font-size: 10px;
-      color: #64748b;
-    }
-
-    .field-error {
-      font-size: 10px;
-      color: #dc2626;
-      font-weight: 600;
-    }
-  }
-}
-
-/* EVN Priority Selection Buttons */
-.priority-group {
-  display: flex;
-  gap: 6px;
-
-  .priority-btn {
-    height: 26px;
-    padding: 0 10px;
-    border: 1px solid #9fc3e4;
-    border-radius: 2px;
-    background: #ffffff;
-    font-size: 11px;
-    font-weight: 600;
-    color: #174f83;
-    cursor: pointer;
-
-    &.active {
-      background: #1d4f91;
-      border-color: #163f75;
-      color: #ffffff;
-    }
-  }
-}
-
-/* Actions Footer Bar */
-.wizard-actions-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-height: 38px;
-  padding: 5px 12px;
-  border-top: 1px solid #9fc3e4;
-  background: #e6f2fb;
-
-  .btn-secondary {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 28px;
-    min-height: 28px;
-    padding: 0 12px;
-    border-radius: 2px;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    background: #ffffff;
-    color: #174f83;
-    border: 1px solid #9fc3e4;
-    text-decoration: none;
-
-    &:hover {
-      background: #f0f7fd;
-    }
-  }
-
-  .btn-primary {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 28px;
-    min-height: 28px;
-    padding: 0 14px;
-    border-radius: 2px;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    background: #1d4f91;
-    color: #ffffff;
-    border: 1px solid #163f75;
-
-    &:hover:not(:disabled) {
-      background: #163f75;
-    }
-
-    &:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-  }
-
-  .btn-submit-mission {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 28px;
-    min-height: 28px;
-    padding: 0 16px;
-    border-radius: 2px;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    background: #15803d;
-    color: #ffffff;
-    border: 1px solid #166534;
-
-    &:hover:not(:disabled) {
-      background: #166534;
-    }
-
-    &:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-  }
-}
-
-/* =========================================================
-   STEP 2: GIS WORKSPACE & DRAWING
-   ========================================================= */
-.step-card-gis {
-  padding: 0;
-  gap: 0;
-}
-
-.gis-header-container {
-  padding: 6px 10px;
-  background: #f8fbfe;
-  border-bottom: 1px solid #9fc3e4;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.region-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  label {
-    font-size: 11px;
-    font-weight: 700;
-    color: #174f83;
-    white-space: nowrap;
-  }
-
-  select {
-    height: 26px;
-    padding: 2px 8px;
-    border: 1px solid #9fc3e4;
-    border-radius: 2px;
-    background: #ffffff;
-    color: #0b1c30;
-    font-size: 11px;
-    min-width: 220px;
-  }
-
-  [role='alert'] {
-    color: #dc2626;
-    font-size: 10px;
-  }
-}
-
-.gis-workspace-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.gis-search-wrapper {
-  position: relative;
-  flex: 0 1 300px;
-
-  .search-input-group {
-    position: relative;
-    display: flex;
-    align-items: center;
-
-    .search-icon {
-      position: absolute;
-      left: 6px;
-      color: #64748b;
-      font-size: 12px;
-    }
-
-    .search-input {
-      width: 100%;
-      height: 26px;
-      padding: 2px 24px 2px 24px;
-      font-size: 11px;
-      border: 1px solid #9fc3e4;
-      border-radius: 2px;
-      background: #ffffff;
-
-      &:focus {
-        outline: none;
-        border-color: #1d4f91;
-      }
-    }
-
-    .search-clear {
-      position: absolute;
-      right: 6px;
-      border: none;
-      background: transparent;
-      color: #64748b;
-      cursor: pointer;
-      font-size: 12px;
-      padding: 2px;
-    }
-  }
-
-  .search-results-dropdown {
-    position: absolute;
-    top: calc(100% + 2px);
-    left: 0;
-    right: 0;
-    background: #ffffff;
-    border: 1px solid #9fc3e4;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1000;
-    max-height: 220px;
-    overflow-y: auto;
-
-    .search-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 10px;
-      border-bottom: 1px solid #eef3f8;
-      gap: 8px;
-
-      &:hover {
-        background: #eef7fd;
-      }
-
-      .search-item-info {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-
-        strong {
-          color: #0b1c30;
-          font-size: 11px;
-        }
-
-        .search-item-sub {
-          font-size: 10px;
-          color: #64748b;
-        }
-      }
-
-      .search-item-actions {
-        display: flex;
-        gap: 4px;
-
-        .btn-search-locate,
-        .btn-search-add {
-          height: 22px;
-          padding: 0 6px;
-          font-size: 10px;
-          font-weight: 600;
-          border-radius: 2px;
-          cursor: pointer;
-        }
-
-        .btn-search-locate {
-          color: #174f83;
-          background: #eaf3fb;
-          border: 1px solid #9fc3e4;
-        }
-
-        .btn-search-add {
-          color: #ffffff;
-          background: #1d4f91;
-          border: 1px solid #163f75;
-
-          &.already-added {
-            background: #dcfce7;
-            color: #15803d;
-            border-color: #86efac;
-          }
-        }
-      }
-    }
-  }
-}
-
-.gis-tools-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-
-  .tool-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 26px;
-    padding: 0 8px;
-    font-size: 11px;
-    font-weight: 600;
-    color: #174f83;
-    background: #ffffff;
-    border: 1px solid #9fc3e4;
-    border-radius: 2px;
-    cursor: pointer;
-
-    &:hover {
-      background: #eaf3fb;
-    }
-
-    &.active {
-      background: #1d4f91;
-      color: #ffffff;
-      border-color: #163f75;
-    }
-
-    &--clear {
-      color: #dc2626;
-      border-color: #fca5a5;
-      background: #fee2e2;
-    }
-
-    &--location {
-      color: #1d4f91;
-      border-color: #9fc3e4;
-    }
-  }
-}
-
-.spatial-status-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  border-radius: 2px;
-  font-size: 10px;
-  color: #15803d;
-
-  &.loading {
-    background: #e0f2fe;
-    border-color: #bae6fd;
-    color: #0369a1;
-  }
-}
-
-.gis-map-viewport {
-  position: relative;
-  width: 100%;
-  height: 520px;
-  border-top: 1px solid #9fc3e4;
-  border-bottom: 1px solid #9fc3e4;
-  background: #e2e8f0;
-
-  .leaflet-map-host {
-    width: 100%;
-    height: 100%;
-  }
-
-  .gis-instruction-overlay {
-    position: absolute;
-    bottom: 8px;
-    left: 8px;
-    z-index: 500;
-    background: rgba(11, 28, 48, 0.85);
-    color: #ffffff;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 2px;
-    pointer-events: none;
-  }
-}
-
-.gis-docked-targets-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 5px 10px;
-  background: #f8fbfe;
-  border-top: 1px solid #9fc3e4;
-
-  .dock-summary {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-
-    .dock-title {
-      font-size: 10px;
-      font-weight: 700;
-      color: #174f83;
-      text-transform: uppercase;
-    }
-
-    .dock-count {
-      font-size: 11px;
-      color: #0b1c30;
-      font-weight: 600;
-    }
-  }
-
-  .dock-chips {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+    gap: 12px;
     flex-wrap: wrap;
-    flex: 1;
 
-    .target-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 1px 6px;
-      background: #e0f2fe;
-      border: 1px solid #bae6fd;
-      border-radius: 2px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 10px;
-      font-weight: 600;
-      color: #0369a1;
-
-      button {
-        border: none;
-        background: transparent;
-        color: #dc2626;
-        cursor: pointer;
-        font-size: 11px;
-        line-height: 1;
-        padding: 0;
-      }
-    }
-
-    .target-chip-more {
-      font-size: 10px;
-      color: #64748b;
-      font-weight: 600;
-    }
-  }
-
-  .dock-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-
-    .btn-clear-dock {
-      background: transparent;
-      border: none;
-      color: #dc2626;
-      font-size: 11px;
-      font-weight: 600;
-      cursor: pointer;
-      text-decoration: underline;
-    }
-  }
-}
-
-/* Map Markers */
-.marker-tower-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.gis-pylon-marker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  cursor: pointer;
-
-  .pylon-box {
-    width: 26px;
-    height: 26px;
-    border-radius: 2px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .pylon-tag {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 0 4px;
-    border-radius: 2px;
-    white-space: nowrap;
-  }
-
-  &.unselected {
-    .pylon-box {
-      background: #ffffff;
-      border: 1.5px solid #1d4f91;
-      color: #1d4f91;
-    }
-    .pylon-tag {
-      background: #ffffff;
-      color: #174f83;
-      border: 1px solid #9fc3e4;
-    }
-  }
-
-  &.selected {
-    .pylon-box {
-      background: #15803d;
-      border: 1.5px solid #166534;
-      color: #ffffff;
-    }
-    .pylon-tag {
-      background: #15803d;
-      color: #ffffff;
-      border: 1px solid #166534;
-    }
-  }
-}
-
-/* =========================================================
-   STEP 3: REVIEW TARGETS & SEQUENCE (DENSE EVN TABLE)
-   ========================================================= */
-.targets-review-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 480px;
-  overflow-y: auto;
-  padding: 8px 10px;
-
-  .target-row-card {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px;
-    background: #ffffff;
-    border: 1px solid #d6dde4;
-    border-radius: 2px;
-
-    &:hover {
-      background: #eef7fd;
-      border-color: #9fc3e4;
-    }
-
-    .target-index-badge {
-      width: 22px;
-      height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 2px;
-      background: #1d4f91;
-      color: #ffffff;
-      font-size: 11px;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-
-    .target-main-info {
-      flex: 1;
+    .header-title-group {
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      gap: 3px;
+      min-width: 0;
+      flex: 1 1 auto;
 
-      .target-code-line {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-
-        .target-code {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          font-size: 11px;
-          font-weight: 700;
-          color: #173b70;
-        }
-
-        .target-status-pill {
-          font-size: 9px;
-          font-weight: 700;
-          padding: 1px 5px;
-          border-radius: 2px;
-          background: #dcfce7;
-          color: #15803d;
-        }
-      }
-
-      .target-name-line {
-        font-size: 11px;
-        color: #475569;
-      }
-
-      .target-coords {
-        font-size: 10px;
-        color: #64748b;
-        font-family: monospace;
-      }
-    }
-
-    .target-reorder-controls {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-
-      .btn-seq-move {
-        width: 22px;
-        height: 18px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: #ffffff;
-        border: 1px solid #9fc3e4;
-        border-radius: 2px;
-        cursor: pointer;
-        color: #174f83;
-        font-size: 10px;
-
-        &:hover:not(:disabled) {
-          background: #eaf3fb;
-        }
-
-        &:disabled {
-          opacity: 0.35;
-          cursor: not-allowed;
-        }
-      }
-    }
-
-    .target-row-actions {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-
-      .btn-target-locate,
-      .btn-target-remove {
-        height: 24px;
-        padding: 0 8px;
-        font-size: 10px;
-        font-weight: 600;
-        border-radius: 2px;
-        cursor: pointer;
-      }
-
-      .btn-target-locate {
-        color: #174f83;
-        background: #ffffff;
-        border: 1px solid #9fc3e4;
-
-        &:hover {
-          background: #eaf3fb;
-        }
-      }
-
-      .btn-target-remove {
-        color: #dc2626;
-        background: #fee2e2;
-        border: 1px solid #fca5a5;
-
-        &:hover {
-          background: #fecaca;
-        }
-      }
-    }
-  }
-
-  .empty-targets-prompt {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 40px 10px;
-    gap: 8px;
-    color: #64748b;
-    font-size: 11px;
-
-    .empty-icon {
-      font-size: 32px;
-      color: #94a3b8;
-    }
-  }
-}
-
-/* =========================================================
-   STEP 4: INSPECTION SETTINGS
-   ========================================================= */
-.settings-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 10px 12px;
-
-  .settings-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-
-    h3 {
-      margin: 0;
-      font-size: 11px;
-      font-weight: 700;
-      color: #174f83;
-      text-transform: uppercase;
-    }
-
-    .checkbox-options-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 8px;
-
-      .checkbox-card {
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        padding: 8px 10px;
-        border: 1px solid #9fc3e4;
-        border-radius: 2px;
-        cursor: pointer;
-        background: #ffffff;
-
-        input[type="checkbox"] {
-          margin-top: 2px;
-          cursor: pointer;
-        }
-
-        .checkbox-card-content {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-
-          strong {
-            font-size: 11px;
-            color: #0b1c30;
-          }
-
-          p {
-            margin: 0;
-            font-size: 10px;
-            color: #64748b;
-          }
-        }
-
-        &.selected {
-          border-color: #1d4f91;
-          background: #eef7fd;
-        }
-      }
-    }
-  }
-}
-
-/* =========================================================
-   STEP 5: ASSIGN INSPECTOR & UAV (EVN DENSE TABLES)
-   ========================================================= */
-.step-card-assign {
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.uav-status-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: #f8fbfe;
-  border: 1px solid #9fc3e4;
-  border-radius: 2px;
-  margin-top: 6px;
-
-  .uav-badge-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 2px;
-    background: #1d4f91;
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-  }
-
-  .uav-details {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-
-    .uav-top-line {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-
-      .uav-code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      h2, h3 {
+        margin: 0;
         font-size: 12px;
         font-weight: 700;
-        color: #173b70;
+        color: #174f83;
+        text-transform: uppercase;
+        line-height: 1.4;
+        word-break: break-word;
       }
 
-      .uav-model {
+      .panel-subinfo {
         font-size: 11px;
+        font-weight: 500;
         color: #475569;
-      }
-
-      .uav-status-tag {
-        font-size: 9px;
-        font-weight: 700;
-        padding: 1px 6px;
-        border-radius: 2px;
-        background: #dcfce7;
-        color: #15803d;
+        line-height: 1.4;
+        display: block;
+        margin: 0;
+        word-break: break-word;
       }
     }
 
-    .uav-battery-bar {
+    .header-badges-group {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 10px;
-      color: #64748b;
-
-      .battery-track {
-        flex: 1;
-        max-width: 160px;
-        height: 6px;
-        border-radius: 2px;
-        background: #e2e8f0;
-        overflow: hidden;
-
-        .battery-fill {
-          height: 100%;
-          background: #15803d;
-
-          &.warn { background: #b45309; }
-          &.low { background: #dc2626; }
-        }
-      }
+      flex-shrink: 0;
     }
+  }
+
+  .panel-body {
+    padding: 12px;
   }
 }
 
-/* =========================================================
-   STEP 6: REVIEW & MAP PREVIEW (EVN DENSE DETAILS)
-   ========================================================= */
-.review-layout-grid {
+.dispatch-form-grid {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap: 10px;
-  padding: 10px 12px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
 
   @media (max-width: 900px) {
     grid-template-columns: 1fr;
   }
+}
 
-  .review-details-col {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+.form-body-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
 
-    .summary-group {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 6px 8px;
-      border: 1px solid #d6dde4;
-      background: #ffffff;
+.form-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 
-      .summary-label {
-        font-size: 10px;
-        font-weight: 700;
-        color: #174f83;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
+  .field-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1e293b;
 
-      .summary-val-title {
-        font-size: 12px;
-        font-weight: 700;
-        color: #0b1c30;
-      }
-
-      .summary-val {
-        font-size: 11px;
-        color: #1e293b;
-      }
-
-      .summary-desc {
-        margin: 0;
-        font-size: 11px;
-        color: #475569;
-      }
-
-      .settings-chips {
-        display: flex;
-        gap: 4px;
-        flex-wrap: wrap;
-
-        .chip {
-          padding: 1px 6px;
-          background: #e0f2fe;
-          border: 1px solid #bae6fd;
-          border-radius: 2px;
-          font-size: 10px;
-          color: #0369a1;
-          font-weight: 600;
-        }
-      }
-
-      .summary-targets-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-
-        .btn-text-edit {
-          background: transparent;
-          border: none;
-          color: #1d4f91;
-          font-size: 10px;
-          font-weight: 600;
-          cursor: pointer;
-          text-decoration: underline;
-        }
-      }
-
-      .summary-targets-ordered {
-        margin: 4px 0 0;
-        padding-left: 16px;
-        max-height: 140px;
-        overflow-y: auto;
-        font-size: 11px;
-        color: #334155;
-
-        li {
-          margin-bottom: 2px;
-        }
-      }
-    }
-
-    .summary-row-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
+    .req {
+      color: #dc2626;
+      font-weight: 700;
     }
   }
 
-  .review-map-col {
+  .field-error {
+    font-size: 10px;
+    color: #dc2626;
+    margin-top: 2px;
+  }
+}
+
+.evn-input,
+.evn-select,
+.evn-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  background: #ffffff;
+  color: #0f172a;
+  transition: border-color 0.15s ease;
+
+  &:focus {
+    outline: none;
+    border-color: #0284c7;
+    box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+  }
+}
+
+.evn-textarea {
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.candidate-brief-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.deadline-config-box {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #d97706;
+  border-radius: 3px;
+  padding: 10px 12px;
+
+  .deadline-presets-bar {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
 
-    .review-map-header {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
+    .preset-btn {
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #334155;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: all 0.15s ease;
 
-      .preview-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: #174f83;
-        text-transform: uppercase;
+      &:hover {
+        background: #f1f5f9;
+        border-color: #94a3b8;
       }
 
-      .sequence-legend {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 10px;
-        color: #15803d;
-        font-weight: 600;
-
-        .legend-line {
-          width: 16px;
-          height: 2px;
-          background: #15803d;
-        }
+      &.active {
+        background: #174f83;
+        color: #ffffff;
+        border-color: #174f83;
+        font-weight: 700;
       }
     }
+  }
+}
 
-    .review-map-wrapper {
-      width: 100%;
-      height: 380px;
-      border: 1px solid #9fc3e4;
+.notification-channels-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 3px;
+  padding: 8px 12px;
+
+  .checkbox-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 11px;
+    color: #334155;
+    cursor: pointer;
+
+    input[type='checkbox'] {
+      margin-top: 2px;
+    }
+  }
+}
+
+.detail-props-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 14px;
+
+  @media (max-width: 800px) {
+    grid-template-columns: 1fr;
+  }
+
+  .prop-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    .prop-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .prop-value {
+      font-size: 11.5px;
+      color: #0b1c30;
+    }
+  }
+}
+
+.asset-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #d6dde4;
+  background: #f8fafc;
+  border-radius: 2px;
+
+  .asset-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    background: #e0f2fe;
+    color: #0369a1;
+    border: 1px solid #bae6fd;
+    border-radius: 2px;
+  }
+}
+
+.workspace-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 14px;
+  background: #dceef9;
+  border: 1px solid #9fc3e4;
+  border-radius: 2px;
+
+  .footer-left {
+    display: flex;
+    align-items: center;
+  }
+
+  .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+.map-type-group {
+  display: inline-flex;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid #94a3b8;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+  .map-type-btn {
+    border: none;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    cursor: pointer;
+    border-right: 1px solid #cbd5e1;
+    transition: all 0.15s ease;
+
+    &:last-child {
+      border-right: none;
+    }
+
+    &:hover {
       background: #e2e8f0;
+      color: #0f172a;
+    }
 
-      .review-map-host {
-        width: 100%;
-        height: 100%;
-      }
+    &.active {
+      background: #174f83;
+      color: #ffffff;
+      font-weight: 700;
     }
   }
 }
