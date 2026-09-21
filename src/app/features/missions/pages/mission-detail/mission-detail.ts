@@ -23,6 +23,7 @@ import { AssetManagementApi, DetectionReviewDecision, MissionAiDetection } from 
 import { AiAnalysisStatusChangedEvent, NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
 import { NotificationsStore } from '../../../notifications/data-access/notifications-store';
+import { Auth } from '../../../../core/auth/auth';
 
 export type MissionDetailTab = 'overview' | 'upload' | 'processing' | 'results' | 'assets' | 'maintenance' | 'activity';
 export type MediaKind = 'image' | 'video';
@@ -135,6 +136,17 @@ export class MissionDetail {
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly notificationsStore = inject(NotificationsStore);
+  protected readonly auth = inject(Auth);
+  protected readonly isInspector = computed(() => {
+    const role = (this.auth.user()?.role || '').toLowerCase();
+    return (
+      role === 'inspector' ||
+      role === 'pilot' ||
+      role === 'admin' ||
+      role === 'systemadmin' ||
+      role === 'administrator'
+    );
+  });
   private readonly aiStatusEvents = new Map<string, AiAnalysisStatusChangedEvent>();
   private readonly missionMapContainer = viewChild<ElementRef<HTMLDivElement>>('missionMap');
   private map: L.Map | null = null;
@@ -472,6 +484,10 @@ export class MissionDetail {
   }
 
   protected setTab(tab: MissionDetailTab): void {
+    if (!this.isInspector() && (tab === 'upload' || tab === 'processing')) {
+      this.activeTab.set('overview');
+      return;
+    }
     this.activeTab.set(tab);
     if (tab === 'results' || tab === 'processing') {
       const missionId = this.mission()?.id;

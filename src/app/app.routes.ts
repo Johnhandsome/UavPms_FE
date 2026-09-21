@@ -39,7 +39,7 @@ export const routes: Routes = [
       { path: 'pre-mission/new', canActivate: [roleGuard(['Admin', 'Manager'])], loadComponent: () => import('./features/pre-mission/pages/assessment-create/assessment-create').then((m) => m.AssessmentCreate), title: 'Tạo đánh giá | UAV-PMS' },
       { path: 'pre-mission/:id', loadComponent: () => import('./features/pre-mission/pages/assessment-workspace/assessment-workspace').then((m) => m.AssessmentWorkspace), title: 'Không gian đánh giá | UAV-PMS' },
       { path: 'missions/new', canActivate: [roleGuard(['Admin', 'Manager'])], loadComponent: () => import('./features/missions/pages/mission-create/mission-create').then((m) => m.MissionCreate), title: 'Tạo nhiệm vụ | UAV-PMS' },
-      { path: 'missions/:id/inspector', loadComponent: () => import('./features/missions/pages/mission-inspector/mission-inspector').then((m) => m.MissionInspector), title: 'Tiếp nhận nhiệm vụ (Phi công) | UAV-PMS' },
+      { path: 'missions/:id/inspector', canActivate: [roleGuard(['Inspector'])], loadComponent: () => import('./features/missions/pages/mission-inspector/mission-inspector').then((m) => m.MissionInspector), title: 'Tiếp nhận nhiệm vụ (Phi công) | UAV-PMS' },
       { path: 'missions/:id', loadComponent: () => import('./features/missions/pages/mission-detail/mission-detail').then((m) => m.MissionDetail), title: 'Chi tiết nhiệm vụ | UAV-PMS' },
       { path: 'missions', loadComponent: () => import('./features/missions/pages/mission-list/mission-list').then((m) => m.MissionList), title: 'Quản lý nhiệm vụ | UAV-PMS' },
       { path: 'reports', loadComponent: () => import('./features/reports/pages/reports-page/reports-page').then((m) => m.ReportsPage), title: 'Báo cáo & Phân tích | UAV-PMS' },

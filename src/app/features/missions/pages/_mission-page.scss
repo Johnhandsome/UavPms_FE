@@ -676,9 +676,11 @@
 }
 
 .mission-live-page.workbench-mode .mission-detail-tabs button.active {
-  border-color: #fea619;
-  background: #fff7e8;
-  color: #855300;
+  border-color: #005bac;
+  border-top: 2px solid #005bac;
+  background: #eff6ff;
+  color: #005bac;
+  font-weight: 700;
 }
 
 .mission-live-page.workbench-mode .mission-live-footer small {
@@ -698,8 +700,8 @@
 }
 
 .mission-drop-zone.drag-active {
-  border-color: #fea619;
-  background: #fffbeb;
+  border-color: #005bac;
+  background: #eff6ff;
 }
 
 .mission-drop-preview {
@@ -905,8 +907,8 @@
 }
 
 .mission-detail-tabs button.active {
-  border-color: #fea619;
-  background: rgba(254,166,25,.18);
+  border-color: #005bac;
+  background: rgba(0, 91, 172, .25);
   color: #fff;
 }
 
@@ -1350,10 +1352,10 @@
 }
 
 .mission-ai-message {
-  border: 1px solid #fed7aa;
+  border: 1px solid #bfdbfe;
   border-radius: 8px;
-  background: #fff7e8;
-  color: #855300;
+  background: #eff6ff;
+  color: #005bac;
   padding: 10px 12px;
 }
 
@@ -1386,19 +1388,19 @@
 }
 
 .mission-processing-steps .active {
-  border-left-color: #fea619;
+  border-left-color: #005bac;
 }
 
 .mission-processing-steps .active span {
-  background: #fea619;
+  background: #005bac;
 }
 
 .mission-processing-steps .done {
-  border-left-color: #10b981;
+  border-left-color: #005bac;
 }
 
 .mission-processing-steps .done span {
-  background: #10b981;
+  background: #005bac;
 }
 
 .mission-processing-media {
@@ -1462,7 +1464,7 @@
 
 .mission-processing-card small {
   margin-top: 4px;
-  color: #855300;
+  color: #005bac;
   font-weight: 800;
 }
 
@@ -1494,8 +1496,8 @@
   position: absolute;
   z-index: 2;
   pointer-events: none;
-  border: 2px solid #ef233c;
-  background: transparent;
+  border: 2px solid #005bac;
+  background: rgba(0, 91, 172, 0.15);
 }
 
 .mission-tab-results .video-preview video {
@@ -1553,7 +1555,7 @@
 
 .review-resize-handle:hover::before,
 .review-resize-handle:focus-visible::before {
-  background: #fea619;
+  background: #005bac;
 }
 
 .mission-tab-results .review-detail .detail-body {
@@ -1588,8 +1590,8 @@
 }
 
 .detail-frame-gallery button.active {
-  border-color: #fea619;
-  box-shadow: 0 0 0 2px rgba(254, 166, 25, .22);
+  border-color: #005bac;
+  box-shadow: 0 0 0 2px rgba(0, 91, 172, .22);
 }
 
 .detail-frame-gallery span {
@@ -1612,8 +1614,8 @@
   top: 5px;
   right: 5px;
   border-radius: 3px;
-  background: #fea619;
-  color: #684000;
+  background: #005bac;
+  color: #ffffff;
   padding: 2px 7px;
   font-size: 10px;
 }
@@ -1702,7 +1704,7 @@
   transform: translate(-50%, -50%);
   border: 2px solid #fff;
   border-radius: 999px;
-  background: #fea619;
+  background: #005bac;
 }
 
 .mission-timeline-labels {
@@ -1745,7 +1747,7 @@
 }
 
 .mission-frame-card.selected {
-  border-color: #fea619;
+  border-color: #005bac;
 }
 
 .mission-frame-card img,
@@ -1797,13 +1799,21 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid #fecdd3;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
-  background: #fff1f2;
-  color: #be123c;
+  background: #f8fafc;
+  color: #475569;
   font-size: 18px;
   font-weight: 900;
   line-height: 1;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+
+  &:hover {
+    border-color: #005bac;
+    background: #eff6ff;
+    color: #005bac;
+  }
 }
 
 .mission-detection-detail h3 {
@@ -1813,8 +1823,8 @@
 
 .mission-detection-detail header span {
   border-radius: 999px;
-  background: #fea619;
-  color: #684000;
+  background: #005bac;
+  color: #ffffff;
   padding: 4px 10px;
   font-weight: 900;
 }
@@ -1874,15 +1884,27 @@
 }
 
 .mission-review-actions .reject {
-  border: 1px solid #fb7185;
-  background: #fff1f2;
-  color: #be123c;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+
+  &:hover:not(:disabled) {
+    border-color: #005bac;
+    background: #eff6ff;
+    color: #005bac;
+  }
 }
 
 .mission-review-actions .approve {
-  border: 1px solid #10b981;
-  background: #059669;
+  border: 0;
+  background: #005bac;
   color: #fff;
+  transition: background .15s ease;
+
+  &:hover:not(:disabled) {
+    background: #004a8f;
+  }
 }
 
 .mission-review-actions button:disabled {
