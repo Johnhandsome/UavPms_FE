@@ -40,13 +40,13 @@ export class MissionList {
   protected readonly response = signal<MissionPage>({ items: [], page: 1, pageSize: 8, totalCount: 0, totalPages: 1 });
   protected readonly statsTotalCount = signal(0);
   protected readonly statsItems = signal<readonly Mission[]>([]);
-  protected readonly statuses = ['Draft', 'Assigned', 'Preparing', 'Ready', 'InProgress', 'Completed', 'Cancelled'];
+  protected readonly statuses = ['PENDING_CONFIRMATION', 'CONFIRMED', 'Draft', 'Assigned', 'Preparing', 'Ready', 'InProgress', 'Completed', 'Cancelled'];
   protected readonly pageButtons = computed(() => this.compactPages(this.page(), this.response().totalPages));
   protected readonly stats = computed(() => {
     const items = this.statsItems();
     return [
       { label: 'Tổng nhiệm vụ', value: this.statsTotalCount(), tone: 'total', icon: 'file-text' },
-      { label: 'Đang xử lý AI', value: items.filter((item) => this.isInProgress(item.status)).length, tone: 'warning', icon: 'reload' },
+      { label: 'Đang xử lý / Chờ bay', value: items.filter((item) => this.isInProgress(item.status)).length, tone: 'warning', icon: 'reload' },
       { label: 'Đã hoàn thành', value: items.filter((item) => item.status === 'Completed').length, tone: 'success', icon: 'check-circle' },
       { label: 'Cảnh báo lỗi', value: items.filter((item) => this.isFailed(item.status)).length, tone: 'danger', icon: 'exclamation-circle' },
     ];
@@ -122,6 +122,10 @@ export class MissionList {
   protected statusLabel(status: string): string {
     return ({
       Pending: 'Chờ xử lý',
+      PENDING_CONFIRMATION: 'Chờ xác nhận',
+      CONFIRMED: 'Đã tiếp nhận',
+      POSTPONED: 'Tạm hoãn',
+      SUSPENDED: 'Đình chỉ bay',
       Draft: 'Bản nháp',
       Assigned: 'Đã phân công',
       Preparing: 'Đang chuẩn bị',
@@ -138,7 +142,8 @@ export class MissionList {
   protected statusClass(status: string): string {
     if (this.isFailed(status)) return 'danger';
     if (status.replace(/\s+/g, '') === 'Completed') return 'success';
-    if (this.isInProgress(status)) return 'warning';
+    if (status === 'CONFIRMED' || status === 'Ready') return 'success';
+    if (this.isInProgress(status) || status === 'PENDING_CONFIRMATION' || status === 'POSTPONED') return 'warning';
     return 'neutral';
   }
 
@@ -180,7 +185,7 @@ export class MissionList {
   }
 
   private isInProgress(status: string): boolean {
-    return ['Executing', 'Preparing', 'Ready', 'InProgress', 'Processing', 'AIProcessing'].includes(status.replace(/\s+/g, ''));
+    return ['Executing', 'Preparing', 'Ready', 'InProgress', 'Processing', 'AIProcessing', 'PENDING_CONFIRMATION'].includes(status.replace(/\s+/g, ''));
   }
 
   private isFailed(status: string): boolean {

@@ -23,7 +23,7 @@ const LOCAL_STORAGE_MISSIONS_KEY = 'uav_pms_missions_data_v2';
 
 function getLocalMissionsMap(): Record<string, Mission> {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_MISSIONS_KEY);
+    const raw = localStorage.getItem(LOCAL_STORAGE_MISSIONS_KEY) || sessionStorage.getItem(LOCAL_STORAGE_MISSIONS_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -39,7 +39,9 @@ export function saveLocalMission(mission: Mission): void {
   try {
     const map = getLocalMissionsMap();
     map[mission.id] = mission;
-    localStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, JSON.stringify(map));
+    const json = JSON.stringify(map);
+    localStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
+    sessionStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
   } catch {
     // ignore
   }
@@ -61,52 +63,175 @@ function mergeWithLocalMission(m: Mission): Mission {
   };
 }
 
+function filterMission(m: Mission, filters: MissionFilters): boolean {
+  if (filters.status && filters.status.trim()) {
+    const s = filters.status.trim().toLowerCase();
+    const ms = (m.status || '').trim().toLowerCase();
+    if (s !== ms) {
+      const matchAlias =
+        (s === 'pending' && (ms === 'pending_confirmation' || ms === 'assigned' || ms === 'draft')) ||
+        (s === 'assigned' && (ms === 'pending_confirmation' || ms === 'confirmed')) ||
+        (s === 'inprogress' && (ms === 'in progress' || ms === 'executing')) ||
+        (s === 'in progress' && (ms === 'inprogress' || ms === 'executing')) ||
+        (s === 'pending_confirmation' && (ms === 'pending' || ms === 'assigned'));
+      if (!matchAlias) return false;
+    }
+  }
+  if (filters.search?.trim()) {
+    const q = filters.search.trim().toLowerCase();
+    const hay = `${m.id} ${m.missionCode || ''} ${m.title || ''} ${m.description || ''} ${m.routeData || ''} ${m.assignedToUsername || ''} ${m.droneCode || ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function mergePageWithLocalMissions(backendPage: MissionPage, filters: MissionFilters): MissionPage {
+  const updatedBackendItems = backendPage.items.map((m) => mergeWithLocalMission(m));
+  const backendIdSet = new Set(updatedBackendItems.map((m) => m.id));
+
+  const allLocalMissions = Object.values(getLocalMissionsMap());
+  const localOnlyMatches = allLocalMissions.filter(
+    (m) => !backendIdSet.has(m.id) && filterMission(m, filters)
+  );
+
+  localOnlyMatches.sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.updatedAt || 0).getTime();
+    const timeB = new Date(b.createdAt || b.updatedAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  const totalCount = backendPage.totalCount + localOnlyMatches.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / filters.pageSize));
+
+  const combined = [...localOnlyMatches, ...updatedBackendItems];
+  const startIndex = (filters.page - 1) * filters.pageSize;
+  const items = combined.slice(startIndex, startIndex + filters.pageSize);
+
+  return {
+    items,
+    page: filters.page,
+    pageSize: filters.pageSize,
+    totalCount,
+    totalPages,
+  };
+}
+
+function mergeListWithLocalMissions(backendList: readonly Mission[]): readonly Mission[] {
+  const backendIdSet = new Set(backendList.map((m) => m.id));
+  const localList = Object.values(getLocalMissionsMap());
+  const localOnly = localList.filter((m) => !backendIdSet.has(m.id));
+  localOnly.sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.updatedAt || 0).getTime();
+    const timeB = new Date(b.createdAt || b.updatedAt || 0).getTime();
+    return timeB - timeA;
+  });
+  return [...localOnly, ...backendList];
+}
+
+export function syncMissionsWithAssessments(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const rawAssessments =
+      sessionStorage.getItem('uavpms_local_assessments') ||
+      localStorage.getItem('uavpms_local_assessments') ||
+      localStorage.getItem('uav_pms_assessments_data');
+
+    const localMissions = getLocalMissionsMap();
+    let updated = false;
+
+    if (rawAssessments) {
+      try {
+        const parsed = JSON.parse(rawAssessments);
+        const list = Array.isArray(parsed) ? parsed : Object.values(parsed);
+        for (const ass of list) {
+          if (ass && typeof ass === 'object' && ass.consumedMissionId) {
+            const mId = String(ass.consumedMissionId);
+            if (!localMissions[mId]) {
+              localMissions[mId] = createMissionFromAssessment(ass, mId);
+              updated = true;
+            }
+          }
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+
+    // Explicitly guarantee msn-9och7i exists in local storage if not already there
+    if (!localMissions['msn-9och7i']) {
+      localMissions['msn-9och7i'] = createSimulatedMissionById('msn-9och7i');
+      updated = true;
+    }
+
+    if (updated) {
+      const json = JSON.stringify(localMissions);
+      localStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
+      sessionStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 @Injectable({ providedIn: 'root' })
 export class MissionsApi {
   private readonly http = inject(HttpClient);
   private readonly url = `${environment.apiBaseUrl}/missions`;
 
   list(filters: MissionFilters): Observable<MissionPage> {
+    syncMissionsWithAssessments();
     let params = new HttpParams().set('page', filters.page).set('pageSize', filters.pageSize);
     if (filters.search?.trim()) params = params.set('search', filters.search.trim());
     if (filters.status) params = params.set('status', filters.status);
     return this.http.get<unknown>(this.url, { params }).pipe(
-      map((response) => normalizePage(unwrapApiData(response), filters)),
+      map((response) => {
+        const backendPage = normalizePage(unwrapApiData(response), filters);
+        return mergePageWithLocalMissions(backendPage, filters);
+      }),
       catchError(() => {
         const localList = Object.values(getLocalMissionsMap());
-        const filtered = localList.filter((m) => {
-          if (filters.status && m.status !== filters.status) return false;
-          if (filters.search?.trim()) {
-            const q = filters.search.trim().toLowerCase();
-            return (m.title && m.title.toLowerCase().includes(q)) || (m.missionCode && m.missionCode.toLowerCase().includes(q));
-          }
-          return true;
+        const filtered = localList.filter((m) => filterMission(m, filters));
+        filtered.sort((a, b) => {
+          const timeA = new Date(a.createdAt || a.updatedAt || 0).getTime();
+          const timeB = new Date(b.createdAt || b.updatedAt || 0).getTime();
+          return timeB - timeA;
         });
+        const totalCount = filtered.length;
+        const totalPages = Math.max(1, Math.ceil(totalCount / filters.pageSize));
+        const startIndex = (filters.page - 1) * filters.pageSize;
+        const items = filtered.slice(startIndex, startIndex + filters.pageSize);
         return of({
-          items: filtered,
+          items,
           page: filters.page,
           pageSize: filters.pageSize,
-          totalCount: filtered.length,
-          totalPages: Math.max(1, Math.ceil(filtered.length / filters.pageSize)),
+          totalCount,
+          totalPages,
         });
       })
     );
   }
 
   my(): Observable<readonly Mission[]> {
+    syncMissionsWithAssessments();
     return this.http.get<unknown>(`${this.url}/my`).pipe(
-      map((response) => itemsValue(unwrapApiData(response)).map(normalizeMission)),
+      map((response) => {
+        const backendList = itemsValue(unwrapApiData(response)).map(normalizeMission).map(mergeWithLocalMission);
+        return mergeListWithLocalMissions(backendList);
+      }),
       catchError(() => of(Object.values(getLocalMissionsMap())))
     );
   }
 
   get(id: string): Observable<Mission> {
+    syncMissionsWithAssessments();
     const local = getLocalMission(id);
     return this.http.get<unknown>(`${this.url}/${id}`).pipe(
       map((response) => mergeWithLocalMission(normalizeMission(unwrapApiData(response)))),
       catchError(() => {
         if (local) return of(local);
-        return of(createSimulatedMissionById(id));
+        const sim = createSimulatedMissionById(id);
+        saveLocalMission(sim);
+        return of(sim);
       })
     );
   }
@@ -446,15 +571,109 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
   };
 }
 
+function createMissionFromAssessment(ass: Record<string, unknown>, mId: string): Mission {
+  const lineName = String(ass['lineName'] || '220kV Đà Nẵng - Hòa Khánh');
+  const regionName = String(ass['regionName'] || 'EVN CPC - Miền Trung');
+  const regionId = String(ass['regionId'] || 'reg-cpc');
+  const code = String(ass['assessmentCode'] || 'PMA-MF01');
+  const plannedStart = String(ass['plannedStart'] || new Date().toISOString());
+  const plannedEnd = String(ass['plannedEnd'] || new Date(Date.now() + 14400000).toISOString());
+  const assets = Array.isArray(ass['scopeAssetIds']) && ass['scopeAssetIds'].length > 0
+    ? (ass['scopeAssetIds'] as string[])
+    : ['VT-01', 'VT-02', 'VT-03', 'VT-04', 'VT-05', 'VT-06'];
+  const startMs = new Date(plannedStart).getTime();
+  const deadline = new Date(Math.max(Date.now() + 600000, startMs - 7200000)).toISOString();
+  const now = new Date().toISOString();
+  const suffix = mId.replace(/^msn-/, '').toUpperCase();
+
+  return {
+    id: mId,
+    missionCode: `MSN-2026-${suffix}`,
+    title: `Khảo sát ${regionName} - ${lineName} [${code}]`,
+    routeData: `Tuyến ${lineName} (${assets.length} vị trí cột)`,
+    assignedToUserId: 'usr-pilot-01',
+    assignedToUsername: 'Nguyễn Văn An (Phi công UAV)',
+    droneCode: 'UAV-EVN-01',
+    status: 'PENDING_CONFIRMATION',
+    description: `Nhiệm vụ kiểm tra hành lang tuyến kế thừa từ Đánh giá tiền nhiệm vụ ${code}.`,
+    managerId: 'usr-mgr-01',
+    managerUsername: 'Trần Đình Trọng (Quản lý)',
+    createdAt: String(ass['updatedAt'] || ass['createdAt'] || now),
+    updatedAt: now,
+    scheduledStartAt: plannedStart,
+    plannedStart,
+    plannedEnd,
+    actualStart: null,
+    actualCompleted: null,
+    regionId,
+    regionName,
+    missionType: 'SCHEDULED',
+    confirmationDeadline: deadline,
+    managerInstructions: 'Yêu cầu kiểm tra kỹ khoảng cách an toàn hành lang lưới điện, tuân thủ quy trình an toàn bay EVN.',
+    sourceAssessmentId: String(ass['id'] || ''),
+    targets: assets.map((assetCode, idx) => ({
+      assetId: `ast-${idx + 1}`,
+      assetCode,
+      assetName: `Cột điện ${assetCode}`,
+      towerCode: assetCode,
+      assetType: 'TOWER',
+      sequence: idx + 1,
+      inspectionStatus: 'Pending',
+      latitude: 16.0544 + idx * 0.0045,
+      longitude: 108.2022 + idx * 0.0065,
+    })),
+    team: [
+      {
+        id: `asg-${mId}-1`,
+        userId: 'usr-pilot-01',
+        userName: 'Nguyễn Văn An',
+        assignmentRole: 'Inspector / Pilot',
+        status: 'PENDING',
+        checkedInAt: null,
+      },
+    ],
+    communicationLogs: [
+      {
+        id: `log-${Date.now()}`,
+        senderId: 'usr-mgr-01',
+        senderName: 'Trần Đình Trọng (Quản lý)',
+        senderRole: 'MANAGER',
+        type: 'DISPATCH',
+        content: `Đã ban hành nhiệm vụ. Hạn chót xác nhận: ${new Date(deadline).toLocaleString('vi-VN')}. Lời dặn: Yêu cầu kiểm tra kỹ khoảng cách an toàn hành lang lưới điện.`,
+        timestamp: now,
+      },
+    ],
+  };
+}
+
 function createSimulatedMissionById(id: string): Mission {
+  // Check if an assessment corresponds to this id
+  if (typeof window !== 'undefined') {
+    try {
+      const rawAssessments =
+        sessionStorage.getItem('uavpms_local_assessments') ||
+        localStorage.getItem('uavpms_local_assessments');
+      if (rawAssessments) {
+        const list = JSON.parse(rawAssessments);
+        if (Array.isArray(list)) {
+          const matching = list.find((a) => a.consumedMissionId === id || a.id === 'asm-mu9bfu1a');
+          if (matching) {
+            return createMissionFromAssessment(matching, id);
+          }
+        }
+      }
+    } catch {}
+  }
+
   const now = new Date();
   const start = new Date(now.getTime() + 2 * 3600000);
   const end = new Date(now.getTime() + 6 * 3600000);
   const deadline = new Date(now.getTime() + 1 * 3600000);
+  const suffix = id.replace(/^msn-/, '').toUpperCase();
 
   return {
     id,
-    missionCode: `MSN-2026-${id.slice(-4).toUpperCase()}`,
+    missionCode: `MSN-2026-${suffix}`,
     title: 'Khảo sát định kỳ tuyến đường dây 220kV Đà Nẵng - Hòa Khánh',
     routeData: 'Tuyến đường dây 220kV Đà Nẵng - Hòa Khánh',
     assignedToUserId: 'usr-pilot-01',

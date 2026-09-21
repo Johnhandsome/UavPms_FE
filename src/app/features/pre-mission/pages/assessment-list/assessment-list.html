@@ -145,6 +145,13 @@
                     <a [routerLink]="['/pre-mission', item.id]" class="evn-code">
                       {{ item.assessmentCode }}
                     </a>
+                    @if (item.consumedMissionId) {
+                      <div style="margin-top: 2px;">
+                        <a [routerLink]="['/missions', item.consumedMissionId]" style="font-size: 10px; font-weight: 600; color: #005bac; text-decoration: underline;" title="Xem nhiệm vụ bay đã tạo">
+                          #{{ item.consumedMissionId }}
+                        </a>
+                      </div>
+                    }
                   </td>
                   <td>
                     <strong>{{ item.regionName }}</strong>

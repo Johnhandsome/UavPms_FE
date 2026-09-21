@@ -101,13 +101,21 @@ export class PreMissionApi {
       .pipe(
         map((response) => {
           const result = normalizeAssessment(unwrapApiData(response));
-          saveLocalAssessment(result);
-          return result;
+          const local = getLocalAssessment(id);
+          const merged: PreMissionAssessment = {
+            ...result,
+            consumedMissionId: local?.consumedMissionId ?? result.consumedMissionId,
+            status: local?.consumedMissionId ? 'CONSUMED' : (local?.status === 'CONSUMED' ? 'CONSUMED' : result.status),
+          };
+          saveLocalAssessment(merged);
+          return merged;
         }),
         catchError(() => {
           const local = getLocalAssessment(id);
           if (local) return of(local);
-          return of(createSimulatedAssessmentById(id));
+          const sim = createSimulatedAssessmentById(id);
+          saveLocalAssessment(sim);
+          return of(sim);
         })
       );
   }
@@ -535,7 +543,7 @@ const STORAGE_KEY = 'uavpms_local_assessments';
 function getStoredAssessmentsMap(): Map<string, PreMissionAssessment> {
   const map = new Map<string, PreMissionAssessment>();
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const arr = JSON.parse(raw) as PreMissionAssessment[];
       arr.forEach((item) => map.set(item.id, item));
@@ -550,7 +558,9 @@ function saveLocalAssessment(item: PreMissionAssessment): void {
   try {
     const map = getStoredAssessmentsMap();
     map.set(item.id, item);
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(map.values())));
+    const serialized = JSON.stringify(Array.from(map.values()));
+    sessionStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(STORAGE_KEY, serialized);
   } catch {
     // Ignore storage write error
   }
