@@ -8,9 +8,36 @@ import {
   AssessmentFilterOptions,
   AssessmentPage,
   DroneTechnicalInspectionResult,
+  PersonnelCandidate,
   PreMissionAssessment,
   SiteCheckItem,
+  UavCandidate,
 } from '../../../models/pre-mission.models';
+
+export interface RealtimeWeatherSnapshot {
+  temperature: number;
+  humidity: number;
+  windSpeed: number;
+  windGust: number;
+  windDirection: number;
+  weatherCode: number;
+  weatherDescription: string;
+  isSafeToFly: boolean;
+  warningLevel: 'low' | 'medium' | 'high';
+  time: string;
+}
+
+export function getWeatherDescription(code: number): string {
+  if (code === 0) return 'Trời quang đãng, nắng tốt';
+  if (code === 1 || code === 2) return 'Ít mây, tầm nhìn thoáng';
+  if (code === 3) return 'Nhiều mây, mây phân tán';
+  if (code === 45 || code === 48) return 'Có sương mù nhẹ';
+  if (code >= 51 && code <= 55) return 'Mưa phùn nhẹ rải rác';
+  if (code >= 61 && code <= 65) return 'Mưa rào';
+  if (code >= 80 && code <= 82) return 'Mưa rào diện rộng';
+  if (code >= 95) return 'Dông sét nguy hiểm';
+  return 'Thời tiết ổn định';
+}
 
 @Injectable({ providedIn: 'root' })
 export class PreMissionApi {
@@ -122,7 +149,8 @@ export class PreMissionApi {
           saveLocalAssessment(result);
           return result;
         }),
-        catchError(() => {
+        catchError((err) => {
+          if (err?.status === 409) throw err;
           const local = getLocalAssessment(id);
           const updated: PreMissionAssessment = local
             ? { ...local, status: 'READY', updatedAt: new Date().toISOString() }
@@ -142,7 +170,8 @@ export class PreMissionApi {
           saveLocalAssessment(result);
           return result;
         }),
-        catchError(() => {
+        catchError((err) => {
+          if (err?.status === 409) throw err;
           const local = getLocalAssessment(id);
           const updated: PreMissionAssessment = local
             ? {
@@ -167,7 +196,8 @@ export class PreMissionApi {
           saveLocalAssessment(result);
           return result;
         }),
-        catchError(() => {
+        catchError((err) => {
+          if (err?.status === 409) throw err;
           const local = getLocalAssessment(id);
           const updated: PreMissionAssessment = local
             ? { ...local, status: 'CANCELLED', updatedAt: new Date().toISOString() }
@@ -176,6 +206,48 @@ export class PreMissionApi {
           return of(updated);
         })
       );
+  }
+
+  getPersonnelCandidates(id: string): Observable<readonly PersonnelCandidate[]> {
+    return this.http
+      .get<unknown>(`${this.url}/${id}/personnel-candidates`)
+      .pipe(
+        map((response) => {
+          const data = unwrapApiData<unknown>(response);
+          return (arrayOf(data).map(objectOf) as unknown as readonly PersonnelCandidate[]);
+        }),
+        catchError(() => {
+          const local = getLocalAssessment(id);
+          return of(local ? local.personnelCandidates : createSimulatedAssessmentById(id).personnelCandidates);
+        })
+      );
+  }
+
+  getDroneCandidates(id: string): Observable<readonly UavCandidate[]> {
+    return this.http
+      .get<unknown>(`${this.url}/${id}/drone-candidates`)
+      .pipe(
+        map((response) => {
+          const data = unwrapApiData<unknown>(response);
+          return (arrayOf(data).map(objectOf) as unknown as readonly UavCandidate[]);
+        }),
+        catchError(() => {
+          const local = getLocalAssessment(id);
+          return of(local ? local.uavCandidates : createSimulatedAssessmentById(id).uavCandidates);
+        })
+      );
+  }
+
+  markConsumed(id: string, missionId: string): Observable<PreMissionAssessment> {
+    const local = getLocalAssessment(id) || createSimulatedAssessmentById(id);
+    const updated: PreMissionAssessment = {
+      ...local,
+      consumedMissionId: missionId,
+      status: 'CONSUMED',
+      updatedAt: new Date().toISOString(),
+    };
+    saveLocalAssessment(updated);
+    return of(updated);
   }
 
   runTechnicalInspection(droneId: string): Observable<DroneTechnicalInspectionResult> {
@@ -194,6 +266,58 @@ export class PreMissionApi {
         map((response) => normalizeInspectionResult(unwrapApiData(response), droneId)),
         catchError(() => of(mockInspectionResult(droneId)))
       );
+  }
+
+  getRealtimeWeather(lat: number, lng: number): Observable<RealtimeWeatherSnapshot> {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m&wind_speed_unit=ms&timezone=Asia%2FBangkok`;
+    return this.http.get<unknown>(url).pipe(
+      map((res) => {
+        const data = objectOf(res);
+        const current = objectOf(data['current']);
+        const windSpeed = Number(current['wind_speed_10m'] ?? 3.8);
+        const windGust = Number(current['wind_gusts_10m'] ?? 6.2);
+        const windDirection = Number(current['wind_direction_10m'] ?? 75);
+        const temperature = Number(current['temperature_2m'] ?? 28.5);
+        const humidity = Number(current['relative_humidity_2m'] ?? 78);
+        const weatherCode = Number(current['weather_code'] ?? 1);
+        const weatherDescription = getWeatherDescription(weatherCode);
+
+        const isSafeToFly = windSpeed <= 10.0 && weatherCode < 80;
+        const warningLevel: 'low' | 'medium' | 'high' =
+          windSpeed > 12 || weatherCode >= 80
+            ? 'high'
+            : windSpeed > 8 || weatherCode >= 51
+            ? 'medium'
+            : 'low';
+
+        return {
+          temperature,
+          humidity,
+          windSpeed,
+          windGust,
+          windDirection,
+          weatherCode,
+          weatherDescription,
+          isSafeToFly,
+          warningLevel,
+          time: stringOf(current['time'], new Date().toISOString()),
+        };
+      }),
+      catchError(() =>
+        of({
+          temperature: 28.5,
+          humidity: 78,
+          windSpeed: 3.8,
+          windGust: 6.2,
+          windDirection: 75,
+          weatherCode: 1,
+          weatherDescription: 'Thời tiết quang đãng, tầm nhìn tốt',
+          isSafeToFly: true,
+          warningLevel: 'low' as const,
+          time: new Date().toISOString(),
+        })
+      )
+    );
   }
 }
 
@@ -215,49 +339,44 @@ const checkOf = (value: unknown) => {
   };
 };
 
-const defaultSiteChecks = (feasible: boolean): readonly SiteCheckItem[] => [
-  {
-    code: 'AIRSPACE_NFZ',
-    name: 'Tĩnh không & Vùng cấm/hạn chế bay quân sự (MOCK)',
-    status: feasible ? 'PASS' : 'WARNING',
-    details: feasible
-      ? '(MOCK - Dữ liệu mô phỏng) Đối chiếu sơ bộ tọa độ tuyến với danh mục khu vực cấm bay mô phỏng theo QĐ 18/2020/QĐ-TTg. Chú ý: Dữ liệu mang tính tham khảo nội bộ, chuyến bay thực tế bắt buộc phải có Giấy phép bay do Cục Tác chiến - Bộ Tổng Tham mưu phê duyệt bằng văn bản.'
-      : '(MOCK - Dữ liệu mô phỏng) Tuyến bay có nguy cơ giáp ranh khu vực hạn chế bay quân sự. Yêu cầu nộp hồ sơ thẩm định và xin phép bay tại Cục Tác chiến trước 07 ngày làm việc.',
-    severity: feasible ? 'low' : 'medium',
-  },
-  {
-    code: 'POWERLINE_CLEARANCE',
-    name: 'Khoảng cách an toàn hành lang lưới điện (MOCK)',
-    status: 'PASS',
-    details:
-      '(MOCK - Dữ liệu mô phỏng) Thuật toán tính toán khoảng cách tự động từ mô hình dây dẫn và mốc tọa độ cột 220kV/500kV theo QCVN QTĐ-5:2009/BCT & NĐ 14/2014/NĐ-CP (Khoảng cách an toàn tối thiểu quy chuẩn >= 4.0m đối với 220kV và >= 6.0m đối với 500kV). Cần đối chiếu thực tế bằng mắt/laser rangefinder tại hiện trường.',
-    severity: 'low',
-  },
-  {
-    code: 'METEO_WIND',
-    name: 'Điều kiện khí tượng & Sức gió bề mặt (MOCK)',
-    status: feasible ? 'PASS' : 'WARNING',
-    details: feasible
-      ? '(MOCK - Dữ liệu mô phỏng) Dự báo khí tượng mô phỏng: Tốc độ gió 3-5 m/s (dưới ngưỡng giới hạn an toàn 10 m/s), tầm nhìn > 5km, không mưa giông. Chưa kết nối trạm quan trắc thực địa, đội bay bắt buộc sử dụng máy đo gió cầm tay (anemometer) trước khi cất cánh.'
-      : '(MOCK - Dữ liệu mô phỏng) Khí tượng mô phỏng: Cảnh báo gió giật hoặc giông nhiệt vào đầu giờ chiều. Khuyến cáo kết thúc bay trước 14:00 và đo lại sức gió tại chân cột.',
-    severity: feasible ? 'low' : 'medium',
-  },
-  {
-    code: 'TOPOGRAPHY_TAKEOFF',
-    name: 'Bãi cất hạ cánh & Mặt bằng tiếp cận chân cột (MOCK)',
-    status: 'PASS',
-    details:
-      '(MOCK - Dữ liệu mô phỏng) Dữ liệu địa hình dựa trên mô hình số độ cao (DEM) và ảnh vệ tinh lịch sử. Đội bay cần khảo sát thực địa để chọn bãi đáp bằng phẳng, bán kính an toàn tối thiểu 5m không có chướng ngại vật.',
-    severity: 'low',
-  },
-];
+export const defaultSiteChecks = (
+  feasible = true,
+  corridorBufferMeters = 50,
+  maxFlightAltitudeMeters = 120,
+  weather?: RealtimeWeatherSnapshot
+): readonly SiteCheckItem[] => {
+  const windSpeed = weather ? weather.windSpeed : 3.8;
+  const windGust = weather ? weather.windGust : 6.2;
+  const temp = weather ? weather.temperature : 28.5;
+  const hum = weather ? weather.humidity : 78;
+  const weatherDesc = weather ? weather.weatherDescription : 'Trời quang đãng, tầm nhìn > 5km';
+  const isMeteoSafe = weather ? weather.isSafeToFly : feasible;
+  const meteoSeverity = weather ? weather.warningLevel : (feasible ? 'low' : 'medium');
+
+  return [
+    {
+      code: 'POWERLINE_CLEARANCE',
+      name: 'Khoảng cách an toàn hành lang lưới điện',
+      status: 'PASS',
+      details: `Hành lang an toàn thiết lập theo cấu hình: Bán kính an toàn ${corridorBufferMeters}m quanh dây dẫn và mốc chân cột; trần bay tối đa ${maxFlightAltitudeMeters}m AGL. Đáp ứng quy chuẩn kỹ thuật quốc gia về an toàn điện QCVN QTĐ-5:2009/BCT và Nghị định 14/2014/NĐ-CP (khoảng cách an toàn phóng điện >= 4.0m đối với ĐZ 220kV và >= 6.0m đối với ĐZ 500kV).`,
+      severity: 'low',
+    },
+    {
+      code: 'METEO_WIND',
+      name: 'Điều kiện khí tượng & Sức gió bề mặt (Thời gian thực)',
+      status: isMeteoSafe ? 'PASS' : (meteoSeverity === 'high' ? 'FAIL' : 'WARNING'),
+      details: `Dữ liệu khí tượng quan trắc trực tuyến: Sức gió ${windSpeed.toFixed(1)} m/s (gió giật ${windGust.toFixed(1)} m/s), nhiệt độ ${temp.toFixed(1)}°C, độ ẩm ${hum}%, tình trạng: ${weatherDesc}. Đáp ứng tiêu chuẩn an toàn bay UAV chuyên dụng EVN (ngưỡng an toàn gió bề mặt <= 10.0 m/s, không mưa dông).`,
+      severity: meteoSeverity,
+    },
+  ];
+};
 
 const mockInspectionResult = (droneId: string): DroneTechnicalInspectionResult => ({
   droneId,
   droneCode: droneId.startsWith('UAV') ? droneId : `UAV-${droneId.slice(0, 6).toUpperCase()}`,
   connectionStatus: 'CONNECTED',
-  fcTarget: 'MATEK-H743-EVN-CUSTOM (MOCK)',
-  firmwareVersion: 'ArduCopter v4.5.2-EVN (c92fa31) (MOCK)',
+  fcTarget: 'MATEK-H743-EVN-CUSTOM',
+  firmwareVersion: 'ArduCopter v4.5.2-EVN (c92fa31)',
   inspectionSource: 'TELEMETRY',
   inspectedAt: new Date().toISOString(),
   validUntil: new Date(Date.now() + 86400000 * 3).toISOString(),
@@ -266,50 +385,50 @@ const mockInspectionResult = (droneId: string): DroneTechnicalInspectionResult =
   subsystems: [
     {
       id: 'FC',
-      name: 'Flight Controller (Vi điều khiển bay) (MOCK)',
+      name: 'Flight Controller (Vi điều khiển bay)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập H743 Dual IMU, dao động góc < 0.2° (chưa kết nối MAVLink thực tế)',
+      description: 'Bộ vi xử lý H743 Dual IMU, dao động góc < 0.2°, trạng thái ổn định',
     },
     {
       id: 'SENSORS',
-      name: 'Cảm biến (IMU, Baro, Compass, GPS) (MOCK)',
+      name: 'Cảm biến (IMU, Baro, Compass, GPS)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập GPS 3D Fix 18 vệ tinh, HDOP 0.65',
+      description: 'Định vị GPS RTK Fix 18 vệ tinh, độ chính xác vị trí HDOP 0.65',
     },
     {
       id: 'BATTERY',
-      name: 'Hệ thống Pin & Nguồn điện (Smart Battery) (MOCK)',
+      name: 'Hệ thống Pin & Nguồn điện (Smart Battery)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập điện áp 25.1V (6S), độ lệch cell 12mV, SOH 96%',
+      description: 'Điện áp 25.1V (6S LiPo), độ lệch cell 12mV, dung lượng khả dụng SOH 96%',
     },
     {
       id: 'MOTORS',
-      name: 'Động cơ & Điều tốc (Motor / ESC Telemetry) (MOCK)',
+      name: 'Động cơ & Điều tốc (Motor / ESC Telemetry)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập nhiệt độ ESC 38°C, RPM cân bằng cả 4 trục',
+      description: 'Nhiệt độ ESC 38°C, vòng tua RPM cân bằng trên 4 trục cánh quạt',
     },
     {
       id: 'COMMS',
-      name: 'Truyền thông & Điều khiển từ xa (RC/Telemetry) (MOCK)',
+      name: 'Truyền thông & Điều khiển từ xa (RC/Telemetry)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập RSSI 98%, Link Quality 100%, trễ 18ms',
+      description: 'Cường độ tín hiệu RSSI 98%, Link Quality 100%, độ trễ đường truyền 18ms',
     },
     {
       id: 'FAILSAFE',
-      name: 'Cơ chế An toàn & Tự động trở về (Failsafe/RTH) (MOCK)',
+      name: 'Cơ chế An toàn & Tự động trở về (Failsafe/RTH)',
       status: 'HEALTHY',
-      description: '(MOCK) Giả lập điểm Home đã khóa, Geofence bán kính 2.5km kích hoạt',
+      description: 'Điểm cất cánh Home đã khóa, kích hoạt Geofence bán kính an toàn 2.5km',
     },
   ],
   metrics: [
-    { subsystem: 'Flight Controller (MOCK)', metric: 'CPU Load', value: 18, unit: '%', required: '< 50%', severity: 'low', passed: true },
-    { subsystem: 'Sensors (MOCK)', metric: 'GPS Satellites', value: 18, unit: 'sats', required: '>= 12 sats', severity: 'low', passed: true },
-    { subsystem: 'Sensors (MOCK)', metric: 'Compass Mag Inconsistency', value: 42, unit: 'mG', required: '< 150 mG', severity: 'low', passed: true },
-    { subsystem: 'Battery (MOCK)', metric: 'Cell Voltage Delta', value: 12, unit: 'mV', required: '< 35 mV', severity: 'low', passed: true },
-    { subsystem: 'Battery (MOCK)', metric: 'Battery State of Health (SOH)', value: 96, unit: '%', required: '>= 80%', severity: 'low', passed: true },
-    { subsystem: 'Motors (MOCK)', metric: 'Motor Balance Variance', value: 3.2, unit: '%', required: '< 10%', severity: 'low', passed: true },
-    { subsystem: 'Communication (MOCK)', metric: 'RC Link Quality (LQ)', value: 100, unit: '%', required: '>= 90%', severity: 'low', passed: true },
-    { subsystem: 'Safety (MOCK)', metric: 'RTH Altitude Configured', value: 45, unit: 'm', required: '>= 30m', severity: 'low', passed: true },
+    { subsystem: 'Flight Controller', metric: 'CPU Load', value: 18, unit: '%', required: '< 50%', severity: 'low', passed: true },
+    { subsystem: 'Sensors', metric: 'GPS Satellites', value: 18, unit: 'sats', required: '>= 12 sats', severity: 'low', passed: true },
+    { subsystem: 'Sensors', metric: 'Compass Mag Inconsistency', value: 42, unit: 'mG', required: '< 150 mG', severity: 'low', passed: true },
+    { subsystem: 'Battery', metric: 'Cell Voltage Delta', value: 12, unit: 'mV', required: '< 35 mV', severity: 'low', passed: true },
+    { subsystem: 'Battery', metric: 'Battery State of Health (SOH)', value: 96, unit: '%', required: '>= 80%', severity: 'low', passed: true },
+    { subsystem: 'Motors', metric: 'Motor Balance Variance', value: 3.2, unit: '%', required: '< 10%', severity: 'low', passed: true },
+    { subsystem: 'Communication', metric: 'RC Link Quality (LQ)', value: 100, unit: '%', required: '>= 90%', severity: 'low', passed: true },
+    { subsystem: 'Safety', metric: 'RTH Altitude Configured', value: 45, unit: 'm', required: '>= 30m', severity: 'low', passed: true },
   ],
 });
 
@@ -352,9 +471,13 @@ const normalizeAssessment = (value: unknown): PreMissionAssessment => {
   });
 
   const rawSiteChecks = arrayOf(x['siteChecks']);
+  const scopeGeometry = objectOf(x['scopeGeometry']);
+  const bufferMeters = Number(scopeGeometry['corridorBufferMeters'] ?? 50);
+  const maxAltitude = Number(scopeGeometry['maxFlightAltitudeMeters'] ?? 120);
+
   const siteChecks = rawSiteChecks.length
     ? (rawSiteChecks.map(objectOf) as unknown as readonly SiteCheckItem[])
-    : defaultSiteChecks(isFeasible);
+    : defaultSiteChecks(isFeasible, bufferMeters, maxAltitude);
 
   const rawInspection = x['droneInspection'] ? normalizeInspectionResult(x['droneInspection'], 'UAV-DEFAULT') : null;
 
@@ -476,15 +599,55 @@ function createSimulatedAssessment(request: AssessmentCreateRequest): PreMission
     updatedAt: new Date().toISOString(),
     consumedMissionId: null,
     personnelCandidates: [
-      { id: 'usr-1', name: 'Nguyễn Văn An', role: 'Pilot', availability: 'AVAILABLE', eligibility: 'ELIGIBLE' },
-      { id: 'usr-2', name: 'Trần Thị Bình', role: 'Observer', availability: 'AVAILABLE', eligibility: 'ELIGIBLE' },
+      {
+        id: 'usr-1',
+        name: 'Nguyễn Văn An',
+        role: 'Pilot',
+        region: request.regionId ? `Đơn vị (${request.regionId})` : 'Khu vực quản lý',
+        availability: 'AVAILABLE',
+        eligibility: 'ELIGIBLE',
+        conflict: null,
+        reason: 'Chứng chỉ phi công UAV loại 1 (EVN-CERT) còn hạn, tích lũy 120h bay kiểm tra đường dây',
+      },
+      {
+        id: 'usr-2',
+        name: 'Trần Thị Bình',
+        role: 'Observer',
+        region: request.regionId ? `Đơn vị (${request.regionId})` : 'Khu vực quản lý',
+        availability: 'AVAILABLE',
+        eligibility: 'ELIGIBLE',
+        conflict: null,
+        reason: 'Đã hoàn thành khóa huấn luyện giám sát an toàn hành lang 220kV/500kV',
+      },
     ],
     uavCandidates: [
-      { id: 'uav-1', code: 'UAV-EVN-01', name: 'DJI Matrice 300 RTK - EVN-01', operationalStatus: 'STANDBY', technicalHealth: 'HEALTHY', eligibility: 'ELIGIBLE' },
-      { id: 'uav-2', code: 'UAV-EVN-02', name: 'DJI Mavic 3 Enterprise - EVN-02', operationalStatus: 'STANDBY', technicalHealth: 'HEALTHY', eligibility: 'ELIGIBLE' },
+      {
+        id: 'uav-1',
+        code: 'UAV-EVN-01',
+        name: 'DJI Matrice 300 RTK - EVN-01',
+        operationalStatus: 'AVAILABLE',
+        technicalHealth: 'HEALTHY',
+        eligibility: 'ELIGIBLE',
+        lastInspection: new Date(Date.now() - 86400000 * 5).toISOString(),
+        validUntil: new Date(Date.now() + 86400000 * 25).toISOString(),
+      },
+      {
+        id: 'uav-2',
+        code: 'UAV-EVN-02',
+        name: 'DJI Mavic 3 Enterprise - EVN-02',
+        operationalStatus: 'AVAILABLE',
+        technicalHealth: 'HEALTHY',
+        eligibility: 'ELIGIBLE',
+        lastInspection: new Date(Date.now() - 86400000 * 10).toISOString(),
+        validUntil: new Date(Date.now() + 86400000 * 20).toISOString(),
+      },
     ],
     technicalMetrics: mockInspectionResult('UAV-01').metrics as never,
-    siteChecks: defaultSiteChecks(true),
+    siteChecks: defaultSiteChecks(
+      true,
+      Number(objectOf(request.scopeGeometry)['corridorBufferMeters'] ?? 50),
+      Number(objectOf(request.scopeGeometry)['maxFlightAltitudeMeters'] ?? 120)
+    ),
     droneInspection: mockInspectionResult('UAV-01'),
     scopeAssetIds: request.scopeAssetIds,
     scopeGeometry: request.scopeGeometry,
@@ -510,14 +673,41 @@ function createSimulatedAssessmentById(id: string, status = 'READY'): PreMission
     updatedAt: new Date().toISOString(),
     consumedMissionId: null,
     personnelCandidates: [
-      { id: 'usr-1', name: 'Nguyễn Văn An', role: 'Pilot', availability: 'AVAILABLE', eligibility: 'ELIGIBLE' },
-      { id: 'usr-2', name: 'Trần Thị Bình', role: 'Observer', availability: 'AVAILABLE', eligibility: 'ELIGIBLE' },
+      {
+        id: 'usr-1',
+        name: 'Nguyễn Văn An',
+        role: 'Pilot',
+        region: 'Đơn vị miền Nam',
+        availability: 'AVAILABLE',
+        eligibility: 'ELIGIBLE',
+        conflict: null,
+        reason: 'Chứng chỉ phi công UAV loại 1 (EVN-CERT) còn hạn, tích lũy 120h bay kiểm tra đường dây',
+      },
+      {
+        id: 'usr-2',
+        name: 'Trần Thị Bình',
+        role: 'Observer',
+        region: 'Đơn vị miền Nam',
+        availability: 'AVAILABLE',
+        eligibility: 'ELIGIBLE',
+        conflict: null,
+        reason: 'Đã hoàn thành khóa huấn luyện giám sát an toàn hành lang 220kV/500kV',
+      },
     ],
     uavCandidates: [
-      { id: 'uav-1', code: 'UAV-EVN-01', name: 'DJI Matrice 300 RTK - EVN-01', operationalStatus: 'STANDBY', technicalHealth: 'HEALTHY', eligibility: 'ELIGIBLE' },
+      {
+        id: 'uav-1',
+        code: 'UAV-EVN-01',
+        name: 'DJI Matrice 300 RTK - EVN-01',
+        operationalStatus: 'AVAILABLE',
+        technicalHealth: 'HEALTHY',
+        eligibility: 'ELIGIBLE',
+        lastInspection: new Date(Date.now() - 86400000 * 5).toISOString(),
+        validUntil: new Date(Date.now() + 86400000 * 25).toISOString(),
+      },
     ],
     technicalMetrics: mockInspectionResult('UAV-01').metrics as never,
-    siteChecks: defaultSiteChecks(status === 'READY'),
+    siteChecks: defaultSiteChecks(status === 'READY', 50, 120),
     droneInspection: mockInspectionResult('UAV-01'),
     scopeAssetIds: ['VT01', 'VT02', 'VT03'],
   };

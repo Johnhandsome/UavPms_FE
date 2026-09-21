@@ -31,10 +31,12 @@ export class AssessmentList {
   // Filters
   protected readonly statusFilter = signal('');
   protected readonly regionFilter = signal('');
+  protected readonly lineFilter = signal('');
   protected readonly dateFilter = signal('');
   protected readonly searchQuery = signal('');
 
   protected readonly regions = signal<readonly { id: string; name: string }[]>([]);
+  protected readonly availableLines = signal<readonly { id: string; lineName: string }[]>([]);
 
   protected readonly statuses = [
     { value: '', label: 'Tất cả trạng thái' },
@@ -50,12 +52,19 @@ export class AssessmentList {
   protected readonly filteredItems = computed(() => {
     const q = this.searchQuery().trim().toLowerCase();
     const region = this.regionFilter();
+    const line = this.lineFilter();
     const date = this.dateFilter();
     let list = this.items();
 
     if (region) {
       list = list.filter(
         (item) => item.regionId === region || item.regionName.toLowerCase() === region.toLowerCase()
+      );
+    }
+
+    if (line) {
+      list = list.filter(
+        (item) => item.lineName?.toLowerCase() === line.toLowerCase() || item.lineId === line
       );
     }
 
@@ -112,6 +121,7 @@ export class AssessmentList {
 
   constructor() {
     this.loadRegions();
+    this.loadLines('');
     this.load();
   }
 
@@ -119,6 +129,14 @@ export class AssessmentList {
     this.gisApi.getRegions().subscribe({
       next: (data) => this.regions.set(data),
       error: (err) => console.warn('Failed to load regions', err),
+    });
+  }
+
+  private loadLines(regionId: string): void {
+    const filter = regionId ? { administrativeAreaId: regionId } : undefined;
+    this.gisApi.getAllGisData(filter).subscribe({
+      next: (data) => this.availableLines.set(data.lines),
+      error: (err: unknown) => console.warn('Failed to load lines', err),
     });
   }
 
@@ -131,7 +149,9 @@ export class AssessmentList {
         pageSize: this.pageSize(),
         status: this.statusFilter(),
         regionId: this.regionFilter(),
+        lineName: this.lineFilter(),
         plannedDate: this.dateFilter(),
+        search: this.searchQuery(),
       })
       .subscribe({
         next: (res) => {
@@ -158,6 +178,14 @@ export class AssessmentList {
 
   protected onRegionChange(regionId: string): void {
     this.regionFilter.set(regionId);
+    this.lineFilter.set('');
+    this.loadLines(regionId);
+    this.page.set(1);
+    this.load();
+  }
+
+  protected onLineChange(lineName: string): void {
+    this.lineFilter.set(lineName);
     this.page.set(1);
     this.load();
   }
@@ -175,6 +203,7 @@ export class AssessmentList {
   protected resetFilters(): void {
     this.statusFilter.set('');
     this.regionFilter.set('');
+    this.lineFilter.set('');
     this.dateFilter.set('');
     this.searchQuery.set('');
     this.page.set(1);

@@ -48,7 +48,17 @@
         <select [value]="regionFilter()" (change)="onRegionChange($any($event.target).value)">
           <option value="">Tất cả khu vực</option>
           @for (reg of regions(); track reg.id) {
-            <option [value]="reg.name">{{ reg.name }}</option>
+            <option [value]="reg.id">{{ reg.name }}</option>
+          }
+        </select>
+      </label>
+
+      <label>
+        <span>Tuyến đường dây:</span>
+        <select [value]="lineFilter()" (change)="onLineChange($any($event.target).value)">
+          <option value="">Tất cả tuyến</option>
+          @for (line of availableLines(); track line.id) {
+            <option [value]="line.lineName">{{ line.lineName }}</option>
           }
         </select>
       </label>
@@ -76,7 +86,7 @@
         <span nz-icon nzType="reload"></span>Làm mới
       </button>
 
-      @if (regionFilter() || statusFilter() || dateFilter() || searchQuery()) {
+      @if (regionFilter() || lineFilter() || statusFilter() || dateFilter() || searchQuery()) {
         <button type="button" class="evn-btn secondary" (click)="resetFilters()">
           <span nz-icon nzType="clear"></span>Đặt lại
         </button>
