@@ -21,7 +21,10 @@ export class Shell {
   private readonly destroyRef = inject(DestroyRef);
   private readonly path = signal(this.router.url);
   protected readonly sidebarOpen = signal(false);
-  protected readonly isAssetRoute = computed(() => /^\/missions\/(?!new(?:\/|$))[^/]+/.test(this.path()));
+  protected readonly isAssetRoute = computed(() => {
+    const cleanPath = (this.path() || '').split('?')[0].split('#')[0];
+    return /^\/missions\/(?!new(?:\/|$))[^/]+/.test(cleanPath);
+  });
   constructor() {
     this.router.events.pipe(filter((event): event is NavigationEnd => event instanceof NavigationEnd), takeUntilDestroyed(this.destroyRef)).subscribe((event) => this.path.set(event.urlAfterRedirects));
     effect(() => {

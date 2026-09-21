@@ -1,0 +1,300 @@
+<div class="mission-inspector-page">
+  @if (loading()) {
+    <div class="inspector-skeleton" aria-label="Đang tải dữ liệu...">
+      <div class="skeleton-header"></div>
+      <div class="skeleton-banner"></div>
+      <div class="skeleton-grid"></div>
+    </div>
+  } @else if (error()) {
+    <div class="inspector-error-card" role="alert">
+      <span nz-icon nzType="close-circle" nzTheme="fill"></span>
+      <span>{{ error() }}</span>
+      <a routerLink="/missions">Quay lại danh sách nhiệm vụ</a>
+    </div>
+  } @else if (mission(); as mission) {
+    <!-- TOP HEADER -->
+    <header class="inspector-header">
+      <div class="header-left">
+        <div class="breadcrumb-row">
+          <a routerLink="/missions" class="btn-breadcrumb">
+            <span nz-icon nzType="arrow-left"></span> Danh sách nhiệm vụ
+          </a>
+          <span class="breadcrumb-separator">/</span>
+          <span class="breadcrumb-current">PHIẾU TIẾP NHẬN PHI CÔNG</span>
+        </div>
+        <div class="title-row">
+          <h1>Nhiệm vụ: {{ mission.missionCode }}</h1>
+          <span class="inspector-status-badge {{ statusClass(mission.status) }}">
+            {{ statusLabel(mission.status) }}
+          </span>
+          @if (mission.priority; as priority) {
+            <span class="priority-tag {{ priority.toLowerCase() }}">{{ priority }}</span>
+          }
+        </div>
+        <p class="mission-desc">{{ mission.title || mission.description }}</p>
+      </div>
+
+      <div class="header-right">
+        <a [routerLink]="['/missions', mission.id]" class="btn-manager-view" title="Chuyển sang màn hình điều phối của Quản lý">
+          <span nz-icon nzType="control"></span> Trang Quản lý điều phối
+        </a>
+      </div>
+    </header>
+
+    <!-- ACTION FEEDBACK TOAST -->
+    @if (actionMessage()) {
+      <div class="action-feedback-toast" role="status">
+        <span nz-icon nzType="check-circle" nzTheme="fill"></span>
+        <span>{{ actionMessage() }}</span>
+        <button type="button" class="btn-toast-close" (click)="actionMessage.set('')">&times;</button>
+      </div>
+    }
+
+    <!-- ACCEPTANCE HERO BANNER -->
+    @if (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending') {
+      <section class="acceptance-hero-banner pending" aria-label="Yêu cầu tiếp nhận nhiệm vụ">
+        <div class="hero-content">
+          <div class="hero-icon">
+            <span nz-icon nzType="clock-circle" nzTheme="outline"></span>
+          </div>
+          <div class="hero-details">
+            <div class="hero-title-row">
+              <h2>YÊU CẦU TIẾP NHẬN NHIỆM VỤ TỪ QUẢN LÝ</h2>
+              @if (confirmationDeadlineDate(); as deadline) {
+                <span class="deadline-tag" [class.overdue]="isDeadlineOverdue()">
+                  <span nz-icon nzType="field-time"></span>
+                  Hạn chót: {{ deadlineRemainingText() }} (Trước {{ deadline | date:'HH:mm dd/MM/yyyy' }})
+                </span>
+              }
+            </div>
+            @if (mission.managerInstructions) {
+              <div class="instructions-quote">
+                <strong>Chỉ đạo của Quản lý:</strong>
+                <p>“{{ mission.managerInstructions }}”</p>
+              </div>
+            } @else {
+              <p class="hero-prompt">
+                Vui lòng rà soát danh sách cột điện, hành lang tuyến và tình trạng thiết bị UAV trước khi xác nhận tiếp nhận.
+              </p>
+            }
+          </div>
+        </div>
+
+        <div class="hero-actions">
+          <button
+            type="button"
+            class="btn-accept-mission"
+            [disabled]="actionBusy()"
+            (click)="confirmMission()">
+            <span nz-icon nzType="check-circle" nzTheme="fill"></span> Xác nhận tiếp nhận nhiệm vụ
+          </button>
+          <button
+            type="button"
+            class="btn-postpone-mission"
+            [disabled]="actionBusy()"
+            (click)="openPostponeModal()">
+            <span nz-icon nzType="clock-circle"></span> Báo bận / Yêu cầu hoãn
+          </button>
+        </div>
+      </section>
+    } @else if (mission.status === 'CONFIRMED') {
+      <section class="acceptance-hero-banner confirmed" aria-label="Đã tiếp nhận nhiệm vụ">
+        <div class="hero-content">
+          <div class="hero-icon confirmed">
+            <span nz-icon nzType="check-circle" nzTheme="fill"></span>
+          </div>
+          <div class="hero-details">
+            <h2>BẠN ĐÃ TIẾP NHẬN NHIỆM VỤ NÀY</h2>
+            <p>
+              Nhiệm vụ đã sẵn sàng bay khảo sát. Hãy hoàn thành bảng kiểm tra BIST UAV và có mặt tại điểm cất cánh đúng giờ theo kế hoạch.
+            </p>
+          </div>
+        </div>
+        <div class="hero-status-pill">
+          <span nz-icon nzType="safety-certificate" nzTheme="fill"></span> Sẵn sàng cất cánh
+        </div>
+      </section>
+    } @else if (mission.status === 'POSTPONED') {
+      <section class="acceptance-hero-banner postponed" aria-label="Yêu cầu hoãn">
+        <div class="hero-content">
+          <div class="hero-icon postponed">
+            <span nz-icon nzType="exclamation-circle" nzTheme="fill"></span>
+          </div>
+          <div class="hero-details">
+            <h2>YÊU CẦU HOÃN ĐANG CHỜ QUẢN LÝ XỬ LÝ</h2>
+            <p>Lý do từ bạn: <em>"{{ mission.postponeReason || 'Lý do phát sinh.' }}"</em></p>
+          </div>
+        </div>
+      </section>
+    } @else if (mission.status === 'SUSPENDED') {
+      <section class="acceptance-hero-banner suspended" aria-label="Tạm đình chỉ bay">
+        <div class="hero-content">
+          <div class="hero-icon suspended">
+            <span nz-icon nzType="pause-circle" nzTheme="fill"></span>
+          </div>
+          <div class="hero-details">
+            <h2>LỆNH TẠM ĐÌNH CHỈ BAY ĐANG CÓ HIỆU LỰC</h2>
+            <p>Lý do từ Quản lý: <em>"{{ mission.suspendedReason || 'Chờ kiểm tra điều kiện an toàn bay.' }}"</em>. Không được phép cất cánh.</p>
+          </div>
+        </div>
+      </section>
+    }
+
+    <!-- WORKSPACE 3-COLUMN LAYOUT -->
+    <div class="inspector-workspace-grid">
+      <!-- COLUMN 1: THÔNG SỐ VÀ THIẾT BỊ -->
+      <aside class="panel-tech-specs">
+        <div class="panel-card-head">
+          <span nz-icon nzType="setting"></span>
+          <h2>Thông số & Thiết bị UAV</h2>
+        </div>
+        <dl class="specs-list">
+          <div class="spec-row">
+            <dt>Tuyến đường dây</dt>
+            <dd>{{ mission.routeData || 'Tuyến lưới điện phân phối 22kV' }}</dd>
+          </div>
+          <div class="spec-row">
+            <dt>Đơn vị quản lý</dt>
+            <dd>{{ mission.regionName || 'EVN' }}</dd>
+          </div>
+          <div class="spec-row highlight">
+            <dt>Phương tiện UAV</dt>
+            <dd>
+              <strong>{{ mission.droneCode || 'UAV-MATRICE-300' }}</strong>
+            </dd>
+          </div>
+          <div class="spec-row">
+            <dt>Phi công phụ trách</dt>
+            <dd>{{ mission.assignedToUsername || 'Chưa gán' }}</dd>
+          </div>
+          <div class="spec-row">
+            <dt>Quản lý giao việc</dt>
+            <dd>{{ mission.managerUsername || 'Quản lý vận hành' }}</dd>
+          </div>
+          <div class="spec-row">
+            <dt>Kế hoạch bay</dt>
+            <dd>
+              {{ mission.plannedStart ? (mission.plannedStart | date:'HH:mm dd/MM/yyyy') : 'Chưa định giờ' }}
+            </dd>
+          </div>
+        </dl>
+
+        <!-- SAFETY CHECKLIST -->
+        <div class="checklist-section">
+          <h3>Quy trình an toàn bay trước giờ cất cánh (BIST):</h3>
+          <ul class="checklist-items">
+            <li><span nz-icon nzType="check"></span> Kiểm tra dung lượng pin UAV (&gt; 95%) & Pin trạm mặt đất.</li>
+            <li><span nz-icon nzType="check"></span> Cảm biến chống va chạm ToF & Radar phát hiện vật thể.</li>
+            <li><span nz-icon nzType="check"></span> Hiệu chuẩn la bàn điện tử & GNSS RTK sai số &lt; 5cm.</li>
+            <li><span nz-icon nzType="check"></span> Duy trì khoảng cách an toàn tĩnh không pha - đất.</li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- COLUMN 2: BẢN ĐỒ GIS HÀNH TRÌNH BAY -->
+      <main class="panel-flight-map">
+        <header class="map-header">
+          <div class="map-header-left">
+            <span nz-icon nzType="compass"></span>
+            <div>
+              <h3>Bản đồ số GIS hành trình bay</h3>
+              <small>{{ targetsWithCoordinates().length }}/{{ mission.targets.length }} vị trí có tọa độ thực địa</small>
+            </div>
+          </div>
+          <div class="map-layer-switch">
+            <button
+              type="button"
+              [class.active]="mapType() === 'satellite'"
+              (click)="setMapType('satellite')">
+              Vệ tinh
+            </button>
+            <button
+              type="button"
+              [class.active]="mapType() === 'streets'"
+              (click)="setMapType('streets')">
+              Đường phố
+            </button>
+          </div>
+        </header>
+
+        <div #inspectorMap class="leaflet-map-canvas" role="region" aria-label="Bản đồ đường bay"></div>
+      </main>
+
+      <!-- COLUMN 3: DANH SÁCH CỘT ĐIỆN VÀ TÀI SẢN -->
+      <aside class="panel-waypoints">
+        <div class="panel-card-head">
+          <span nz-icon nzType="unordered-list"></span>
+          <h2>Danh sách cột điện ({{ mission.targets.length }})</h2>
+        </div>
+
+        <div class="waypoints-scroll-list">
+          @for (target of mission.targets; track target.assetId) {
+            <button
+              type="button"
+              class="waypoint-item-btn"
+              [class.active]="selectedTargetId() === target.assetId"
+              (click)="selectTarget(target.assetId)">
+              <span class="waypoint-badge">{{ target.sequence || ($index + 1) }}</span>
+              <div class="waypoint-info">
+                <strong>{{ target.towerCode || target.assetCode }}</strong>
+                <span>{{ target.assetName || 'Cột đỡ đỡ néo 22kV' }}</span>
+                @if (target.latitude && target.longitude) {
+                  <small class="gps-text">GPS: {{ target.latitude.toFixed(4) }}, {{ target.longitude.toFixed(4) }}</small>
+                }
+              </div>
+              <span class="waypoint-chevron" nz-icon nzType="right"></span>
+            </button>
+          } @empty {
+            <div class="empty-waypoints">Chưa có vị trí cột điện trong nhiệm vụ này.</div>
+          }
+        </div>
+
+        @if (selectedTarget(); as current) {
+          <div class="selected-target-details">
+            <h4>Chi tiết cột đang chọn:</h4>
+            <div class="target-quick-data">
+              <div><span>Mã cột:</span><strong>{{ current.towerCode || current.assetCode }}</strong></div>
+              <div><span>Tên tài sản:</span><strong>{{ current.assetName || '—' }}</strong></div>
+              @if (current.latitude && current.longitude) {
+                <div><span>Tọa độ:</span><strong>{{ current.latitude.toFixed(5) }}, {{ current.longitude.toFixed(5) }}</strong></div>
+              }
+              <div><span>Khoảng cách an toàn:</span><strong class="text-green-700">&ge; 4.0m (22kV)</strong></div>
+            </div>
+          </div>
+        }
+      </aside>
+    </div>
+
+    <!-- POSTPONE MODAL -->
+    @if (showPostponeModal()) {
+      <div class="modal-backdrop" (click)="closePostponeModal()">
+        <div class="modal-card" (click)="$event.stopPropagation()">
+          <header class="modal-header">
+            <h3>Báo bận / Yêu cầu dời lịch nhiệm vụ</h3>
+            <button type="button" class="btn-modal-close" (click)="closePostponeModal()">&times;</button>
+          </header>
+          <div class="modal-body">
+            <p>Vui lòng nêu rõ lý do phát sinh (thời tiết, kỹ thuật thiết bị hoặc lịch trình đột xuất) để Quản lý điều phối lại:</p>
+            <textarea
+              class="modal-textarea"
+              rows="4"
+              placeholder="Ví dụ: Phát hiện gió giật vượt 12 m/s tại địa bàn khảo sát hoặc thiết bị UAV đang bảo trì pin..."
+              [value]="postponeReason()"
+              (input)="postponeReason.set($any($event.target).value)">
+            </textarea>
+          </div>
+          <footer class="modal-footer">
+            <button type="button" class="btn-cancel" (click)="closePostponeModal()">Đóng</button>
+            <button
+              type="button"
+              class="btn-submit-postpone"
+              [disabled]="!postponeReason().trim() || actionBusy()"
+              (click)="submitPostpone()">
+              Gửi yêu cầu hoãn
+            </button>
+          </footer>
+        </div>
+      </div>
+    }
+  }
+</div>

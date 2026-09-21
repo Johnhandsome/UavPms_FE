@@ -37,7 +37,7 @@
           }
           @for (mission of response().items; track mission.id) {
             <tr>
-              <td><a [routerLink]="['/missions', mission.id]" class="mission-code">{{ mission.missionCode }}</a></td>
+              <td><a [routerLink]="isInspector() ? ['/missions', mission.id, 'inspector'] : ['/missions', mission.id]" class="mission-code">{{ mission.missionCode }}</a></td>
               <td><strong>{{ mission.title || 'Chưa đặt tên nhiệm vụ' }}</strong></td>
               <td>{{ mission.createdAt ? (mission.createdAt | date:'dd/MM/yyyy') : 'N/A' }}</td>
               <td>{{ routeLabel(mission) }}</td>
@@ -45,7 +45,7 @@
               <td><span class="mission-status {{ statusClass(mission.status) }}">{{ statusLabel(mission.status) }}</span></td>
               <td>
                 <div class="mission-row-actions">
-                  <a class="mission-row-action" [routerLink]="['/missions', mission.id]">Xem</a>
+                  <a class="mission-row-action" [routerLink]="isInspector() ? ['/missions', mission.id, 'inspector'] : ['/missions', mission.id]">Xem</a>
                 </div>
               </td>
             </tr>
