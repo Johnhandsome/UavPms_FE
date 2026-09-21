@@ -15,18 +15,14 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import type { FeatureCollection, LineString } from 'geojson';
-import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, addProtocol, type GeoJSONSource, type StyleSpecification } from 'maplibre-gl';
-import { Protocol } from 'pmtiles';
+import * as L from 'leaflet';
 import { catchError, finalize, of } from 'rxjs';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { Mission } from '../../../../models/missions.models';
 import { AssetManagementApi, DetectionReviewDecision, MissionAiDetection } from '../../../assets/data-access/asset-management-api';
 import { AiAnalysisStatusChangedEvent, NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
-
-const pmtilesProtocol = new Protocol();
-addProtocol('pmtiles', pmtilesProtocol.tile);
+import { NotificationsStore } from '../../../notifications/data-access/notifications-store';
 
 export type MissionDetailTab = 'overview' | 'upload' | 'processing' | 'results' | 'assets' | 'maintenance' | 'activity';
 export type MediaKind = 'image' | 'video';
@@ -138,17 +134,74 @@ export class MissionDetail {
   private readonly realtime = inject(NotificationsRealtime);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly notificationsStore = inject(NotificationsStore);
   private readonly aiStatusEvents = new Map<string, AiAnalysisStatusChangedEvent>();
   private readonly missionMapContainer = viewChild<ElementRef<HTMLDivElement>>('missionMap');
-  private missionMap: MapLibreMap | null = null;
-  private missionTargetMarkers: Marker[] = [];
-  private missionMapResizeObserver: ResizeObserver | null = null;
+  private map: L.Map | null = null;
+  private currentTileLayer: L.TileLayer | null = null;
+  private targetMarkers: L.Marker[] = [];
+  private routePolyline: L.Polyline | null = null;
+  private mapResizeObserver: ResizeObserver | null = null;
+  protected readonly mapType = signal<'satellite' | 'streets'>('satellite');
 
   @ViewChild('resultVideo') private readonly resultVideo?: ElementRef<HTMLVideoElement>;
 
   protected readonly loading = signal(true);
   protected readonly error = signal('');
   protected readonly mission = signal<Mission | null>(null);
+
+  // MF02 Communication & Lifecycle State
+  protected readonly activeRole = signal<'MANAGER' | 'INSPECTOR'>('MANAGER');
+  protected readonly actionBusy = signal(false);
+  protected readonly actionMessage = signal('');
+  protected readonly showPostponeModal = signal(false);
+  protected readonly postponeReason = signal('');
+  protected readonly showSuspendModal = signal(false);
+  protected readonly suspendReason = signal('');
+  protected readonly showCancelModal = signal(false);
+  protected readonly cancelReason = signal('');
+  protected readonly chatMessage = signal('');
+  protected readonly currentTime = signal(Date.now());
+
+  protected readonly confirmationDeadlineDate = computed(() => {
+    const m = this.mission();
+    if (!m) return null;
+    if (m.confirmationDeadline) return new Date(m.confirmationDeadline);
+    if (m.plannedStart) {
+      return new Date(new Date(m.plannedStart).getTime() - 2 * 3600 * 1000);
+    }
+    return null;
+  });
+
+  protected readonly isDeadlineOverdue = computed(() => {
+    const deadline = this.confirmationDeadlineDate();
+    const m = this.mission();
+    if (!deadline || !m) return false;
+    const pending = m.status === 'PENDING_CONFIRMATION' || m.status === 'Assigned' || m.status === 'Pending';
+    return pending && this.currentTime() > deadline.getTime();
+  });
+
+  protected readonly deadlineTimeRemaining = computed(() => {
+    const deadline = this.confirmationDeadlineDate();
+    if (!deadline) return null;
+    const now = this.currentTime();
+    const diffMs = deadline.getTime() - now;
+    const isPast = diffMs < 0;
+    const absDiffMs = Math.abs(diffMs);
+    const hours = Math.floor(absDiffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((absDiffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (isPast) {
+      return `Quá hạn ${hours > 0 ? `${hours}h ` : ''}${minutes} phút`;
+    }
+    return `Còn ${hours > 0 ? `${hours}h ` : ''}${minutes} phút`;
+  });
+
+  protected readonly communicationLogs = computed(() => {
+    const m = this.mission();
+    if (!m) return [];
+    return m.communicationLogs ?? [];
+  });
   protected readonly targetsWithCoordinates = computed(() => this.mission()?.targets.filter((target) =>
     Number.isFinite(target.latitude) && Number.isFinite(target.longitude)
       && Math.abs(target.latitude!) <= 90 && Math.abs(target.longitude!) <= 180,
@@ -382,14 +435,12 @@ export class MissionDetail {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => this.handleAiAnalysisStatus(event));
 
+    const timer = setInterval(() => this.currentTime.set(Date.now()), 30000);
+
     this.destroyRef.onDestroy(() => {
+      clearInterval(timer);
       this.stopResultDetailResize();
-      this.missionTargetMarkers.forEach((marker) => marker.remove());
-      this.missionTargetMarkers = [];
-      this.missionMapResizeObserver?.disconnect();
-      this.missionMapResizeObserver = null;
-      this.missionMap?.remove();
-      this.missionMap = null;
+      this.cleanupMap();
     });
     this.realtime.connect();
 
@@ -428,142 +479,145 @@ export class MissionDetail {
     }
   }
 
+  protected setMapType(type: 'satellite' | 'streets'): void {
+    this.mapType.set(type);
+    if (!this.map) return;
+    if (this.currentTileLayer) {
+      this.map.removeLayer(this.currentTileLayer);
+      this.currentTileLayer = null;
+    }
+
+    const tileUrl = type === 'satellite'
+      ? 'https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+      : 'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}';
+
+    const tileLayer = L.tileLayer(tileUrl, {
+      maxZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+      attribution: '© Google Maps | EVN UAV-PMS',
+      keepBuffer: 6,
+    });
+
+    let hasFallenBack = false;
+    tileLayer.on('tileerror', () => {
+      if (!hasFallenBack) {
+        hasFallenBack = true;
+        tileLayer.setUrl('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png');
+      }
+    });
+
+    this.currentTileLayer = tileLayer;
+    this.currentTileLayer.addTo(this.map);
+  }
+
   protected selectTarget(assetId: string): void {
     this.selectedTargetId.set(assetId);
     const target = this.mission()?.targets.find((item) => item.assetId === assetId);
-    if (!target || !this.targetsWithCoordinates().some((item) => item.assetId === assetId)) return;
-    this.missionMap?.flyTo({ center: [target.longitude!, target.latitude!], zoom: 14, duration: 650 });
+    if (!target || !target.latitude || !target.longitude || !this.map) return;
+    this.map.panTo([target.latitude, target.longitude], { animate: true, duration: 0.5 });
   }
 
   private renderMissionMap(): void {
     const container = this.missionMapContainer()?.nativeElement;
     if (!container) return;
 
-    if (this.missionMap && this.missionMap.getContainer() !== container) {
-      this.missionMapResizeObserver?.disconnect();
-      this.missionMapResizeObserver = null;
-      this.missionMap.remove();
-      this.missionMap = null;
+    if (this.map && this.map.getContainer() !== container) {
+      this.cleanupMap();
     }
 
-    if (!this.missionMap) {
-      const useOfflineArchive = this.targetsWithCoordinates().length > 0 && this.targetsInEvnspcCoverage().length === this.targetsWithCoordinates().length;
-      const archiveUrl = new URL('/maps/evnspc-south-z12.pmtiles', window.location.origin).href;
-      const localGrid: FeatureCollection<LineString> = {
-        type: 'FeatureCollection',
-        features: [
-          ...Array.from({ length: 9 }, (_, index) => {
-            const longitude = 102 + index;
-            return { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: [[longitude, 8], [longitude, 24]] } };
-          }),
-          ...Array.from({ length: 9 }, (_, index) => {
-            const latitude = 8 + index * 2;
-            return { type: 'Feature' as const, properties: {}, geometry: { type: 'LineString' as const, coordinates: [[102, latitude], [110, latitude]] } };
-          }),
-        ],
-      };
-      const style: StyleSpecification = {
-        version: 8,
-        glyphs: useOfflineArchive ? new URL('/maps/fonts/{fontstack}/{range}.pbf', window.location.origin).href : undefined,
-        sources: {
-          localGrid: { type: 'geojson', data: localGrid },
-          ...(useOfflineArchive ? { basemap: { type: 'vector' as const, url: `pmtiles://${archiveUrl}`, attribution: '&copy; OpenStreetMap contributors' } } : {}),
-        },
-        layers: [
-          { id: 'background', type: 'background', paint: { 'background-color': '#edf2f7' } },
-          { id: 'local-grid', type: 'line', source: 'localGrid', paint: { 'line-color': '#cbd5e1', 'line-width': 1, 'line-opacity': 0.7 } },
-          ...(useOfflineArchive ? [
-            { id: 'earth', type: 'fill' as const, source: 'basemap', 'source-layer': 'earth', paint: { 'fill-color': '#f7f5ef' } },
-            { id: 'landuse', type: 'fill' as const, source: 'basemap', 'source-layer': 'landuse', paint: { 'fill-color': '#e8f2e4', 'fill-opacity': 0.72 } },
-            { id: 'water', type: 'fill' as const, source: 'basemap', 'source-layer': 'water', paint: { 'fill-color': '#b8dff2' } },
-            { id: 'boundaries', type: 'line' as const, source: 'basemap', 'source-layer': 'boundaries', paint: { 'line-color': '#9aa9bb', 'line-width': 1 } },
-            { id: 'roads', type: 'line' as const, source: 'basemap', 'source-layer': 'roads', paint: { 'line-color': '#ffffff', 'line-width': 2 } },
-          ] : []),
-        ],
-      };
-
-      this.missionMap = new MapLibreMap({
-        container,
-        style,
-        center: [106.5, 11.7],
-        zoom: 6,
-        attributionControl: {},
-        maxBounds: [[102, 8], [110, 24]],
-        minZoom: 5,
-        maxZoom: 15,
-        maxTileCacheSize: 256,
-        refreshExpiredTiles: false,
-        fadeDuration: 150,
-        renderWorldCopies: false,
-        dragRotate: false,
-        pitchWithRotate: false,
+    if (!this.map) {
+      (container as unknown as { _leaflet_id: number | null })._leaflet_id = null;
+      this.map = L.map(container, {
+        zoomControl: false,
+        attributionControl: false,
       });
-      this.missionMap.addControl(new NavigationControl({ showCompass: false }), 'top-left');
-      this.missionMapResizeObserver = new ResizeObserver(() => this.missionMap?.resize());
-      this.missionMapResizeObserver.observe(container);
-      this.missionMap.once('load', () => this.updateMissionMapTargets());
+
+      L.control.zoom({ position: 'topright' }).addTo(this.map);
+      this.setMapType(this.mapType());
+
+      this.mapResizeObserver = new ResizeObserver(() => {
+        this.map?.invalidateSize();
+      });
+      this.mapResizeObserver.observe(container);
+    }
+
+    this.renderTargetsOnMap();
+  }
+
+  private renderTargetsOnMap(): void {
+    if (!this.map) return;
+
+    this.targetMarkers.forEach((m) => m.remove());
+    this.targetMarkers = [];
+    if (this.routePolyline) {
+      this.routePolyline.remove();
+      this.routePolyline = null;
+    }
+
+    const targets = [...this.targetsWithCoordinates()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+    if (!targets.length) {
+      this.map.setView([16.0, 107.5], 6);
       return;
     }
 
-    if (this.missionMap.isStyleLoaded()) this.updateMissionMapTargets();
-  }
-
-  private updateMissionMapTargets(): void {
-    const map = this.missionMap;
-    if (!map) return;
-
-    this.missionTargetMarkers.forEach((marker) => marker.remove());
-    this.missionTargetMarkers = [];
-    const targets = [...this.targetsWithCoordinates()].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
-    const coordinates = targets.map((target) => [target.longitude!, target.latitude!] as [number, number]);
-
-    const routeData: FeatureCollection<LineString> = {
-      type: 'FeatureCollection',
-      features: coordinates.length > 1 ? [{
-        type: 'Feature',
-        properties: {},
-        geometry: { type: 'LineString', coordinates },
-      }] : [],
-    };
-    const routeSource = map.getSource<GeoJSONSource>('mission-route');
-    if (routeSource) {
-      routeSource.setData(routeData);
-    } else {
-      map.addSource('mission-route', { type: 'geojson', data: routeData });
-      map.addLayer({
-        id: 'mission-route',
-        type: 'line',
-        source: 'mission-route',
-        paint: { 'line-color': '#2563eb', 'line-width': 3, 'line-opacity': 0.75, 'line-dasharray': [2, 2] },
-      });
-    }
+    const latLngs: L.LatLngExpression[] = [];
 
     targets.forEach((target, index) => {
-      const label = target.towerCode || target.assetCode || `Điểm ${index + 1}`;
-      const markerElement = document.createElement('div');
-      markerElement.className = 'mission-target-map-marker';
-      const markerDot = document.createElement('span');
-      markerDot.className = 'mission-target-map-dot';
-      const markerLabel = document.createElement('span');
-      markerLabel.className = 'mission-target-map-label';
-      markerLabel.textContent = `${target.sequence ?? index + 1}. ${label}`;
-      markerElement.append(markerLabel, markerDot);
-      markerElement.addEventListener('click', () => this.selectTarget(target.assetId));
-      this.missionTargetMarkers.push(new Marker({ element: markerElement, anchor: 'bottom' })
-        .setLngLat(coordinates[index])
-        .addTo(map));
+      const lat = target.latitude!;
+      const lng = target.longitude!;
+      latLngs.push([lat, lng]);
+
+      const sequence = target.sequence || index + 1;
+      const code = target.towerCode || target.assetCode || `Cột ${sequence}`;
+
+      const icon = L.divIcon({
+        className: 'custom-tower-marker',
+        html: `
+          <div class="tower-pin">
+            <span class="pin-badge">${sequence}</span>
+            <span class="pin-code">${code}</span>
+          </div>
+        `,
+        iconSize: [48, 48],
+        iconAnchor: [24, 24],
+      });
+
+      const marker = L.marker([lat, lng], { icon })
+        .addTo(this.map!)
+        .bindPopup(`<strong>${code}</strong><br/>${target.assetName || ''}<br/>GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+
+      marker.on('click', () => this.selectTarget(target.assetId));
+      this.targetMarkers.push(marker);
     });
 
-    requestAnimationFrame(() => {
-      map.resize();
-      if (coordinates.length) {
-        const bounds = coordinates.reduce(
-          (current, point) => current.extend(point),
-          new LngLatBounds(coordinates[0], coordinates[0]),
-        );
-        map.fitBounds(bounds, { padding: 56, maxZoom: 15 });
-      }
-    });
+    if (latLngs.length > 1) {
+      this.routePolyline = L.polyline(latLngs, {
+        color: '#0284c7',
+        weight: 3,
+        dashArray: '6, 6',
+        opacity: 0.9,
+      }).addTo(this.map);
+    }
+
+    const bounds = L.latLngBounds(latLngs);
+    this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+    setTimeout(() => this.map?.invalidateSize(), 100);
+    setTimeout(() => this.map?.invalidateSize(), 300);
+  }
+
+  private cleanupMap(): void {
+    this.mapResizeObserver?.disconnect();
+    this.mapResizeObserver = null;
+    this.targetMarkers.forEach((m) => m.remove());
+    this.targetMarkers = [];
+    if (this.routePolyline) {
+      this.routePolyline.remove();
+      this.routePolyline = null;
+    }
+    if (this.map) {
+      this.map.remove();
+      this.map = null;
+    }
   }
 
   protected chooseMedia(event: Event): void {
@@ -869,29 +923,293 @@ export class MissionDetail {
     window.addEventListener('pointerup', this.stopResultDetailResize);
   }
 
+  protected switchRole(role: 'MANAGER' | 'INSPECTOR'): void {
+    this.activeRole.set(role);
+  }
+
+  protected confirmMission(): void {
+    const currentMission = this.mission();
+    if (!currentMission) return;
+    this.actionBusy.set(true);
+    this.actionMessage.set('');
+
+    this.api
+      .confirmMission(currentMission.id, 'Inspector xác nhận sẵn sàng tiếp nhận nhiệm vụ.')
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.actionMessage.set('Đã xác nhận nhiệm vụ bay thành công!');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.managerId,
+            title: `[MF02] Inspector đã xác nhận nhiệm vụ ${updated.missionCode}`,
+            body: `Phi công ${updated.assignedToUsername || 'Inspector'} đã xác nhận tiếp nhận nhiệm vụ. Sẵn sàng cất cánh theo lịch.`,
+            type: 'MISSION_CONFIRMED',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected openPostponeModal(): void {
+    this.postponeReason.set('');
+    this.showPostponeModal.set(true);
+  }
+
+  protected closePostponeModal(): void {
+    this.showPostponeModal.set(false);
+  }
+
+  protected submitPostpone(): void {
+    const currentMission = this.mission();
+    const reason = this.postponeReason().trim();
+    if (!currentMission || !reason) return;
+    this.actionBusy.set(true);
+
+    this.api
+      .postponeMission(currentMission.id, reason)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.showPostponeModal.set(false);
+          this.actionMessage.set('Đã gửi yêu cầu hoãn nhiệm vụ tới Quản lý.');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.managerId,
+            title: `[MF02 CẢNH BÁO] Yêu cầu hoãn nhiệm vụ ${updated.missionCode}`,
+            body: `Phi công đề xuất hoãn nhiệm vụ. Lý do: ${reason}`,
+            type: 'MISSION_POSTPONED',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected openSuspendModal(): void {
+    this.suspendReason.set('');
+    this.showSuspendModal.set(true);
+  }
+
+  protected closeSuspendModal(): void {
+    this.showSuspendModal.set(false);
+  }
+
+  protected submitSuspend(): void {
+    const currentMission = this.mission();
+    const reason = this.suspendReason().trim();
+    if (!currentMission || !reason) return;
+    this.actionBusy.set(true);
+
+    this.api
+      .suspendMission(currentMission.id, reason)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.showSuspendModal.set(false);
+          this.actionMessage.set('Đã ra lệnh tạm đình chỉ nhiệm vụ bay.');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.assignedToUserId,
+            title: `[MF02 LỆNH ĐÌNH CHỈ] Nhiệm vụ ${updated.missionCode} bị tạm dừng`,
+            body: `Quản lý đã tạm đình chỉ nhiệm vụ bay. Lý do: ${reason}`,
+            type: 'MISSION_SUSPENDED',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected resumeMission(): void {
+    const currentMission = this.mission();
+    if (!currentMission) return;
+    this.actionBusy.set(true);
+
+    this.api
+      .resumeMission(currentMission.id)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.actionMessage.set('Đã khôi phục nhiệm vụ bay.');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.assignedToUserId,
+            title: `[MF02 KHÔI PHỤC] Nhiệm vụ ${updated.missionCode} được phép tiếp tục`,
+            body: `Quản lý đã dỡ bỏ lệnh tạm đình chỉ. Hãy chuẩn bị cất cánh an toàn.`,
+            type: 'MISSION_RESUMED',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected openCancelModal(): void {
+    this.cancelReason.set('');
+    this.showCancelModal.set(true);
+  }
+
+  protected closeCancelModal(): void {
+    this.showCancelModal.set(false);
+  }
+
+  protected submitCancel(): void {
+    const currentMission = this.mission();
+    const reason = this.cancelReason().trim();
+    if (!currentMission || !reason) return;
+    this.actionBusy.set(true);
+
+    this.api
+      .cancelMissionWithReason(currentMission.id, reason)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.showCancelModal.set(false);
+          this.actionMessage.set('Đã hủy bỏ nhiệm vụ bay.');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.assignedToUserId,
+            title: `[MF02 HỦY BỎ] Nhiệm vụ ${updated.missionCode} đã bị hủy`,
+            body: `Quản lý đã hủy bỏ nhiệm vụ. Lý do: ${reason}`,
+            type: 'MISSION_CANCELLED',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected sendReminder(): void {
+    const currentMission = this.mission();
+    if (!currentMission) return;
+    this.actionBusy.set(true);
+
+    this.api
+      .sendReminder(currentMission.id)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.actionMessage.set('Đã gửi thông báo nhắc nhở tới Inspector!');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: updated.assignedToUserId,
+            title: `[MF02 KHẨN] Nhắc nhở xác nhận nhiệm vụ ${updated.missionCode}`,
+            body: `Quản lý yêu cầu xác nhận nhiệm vụ ngay. Hạn chót: ${this.deadlineTimeRemaining() ?? 'Sắp hết hạn'}`,
+            type: 'MISSION_REMINDER',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
+  protected sendChatMessage(): void {
+    const currentMission = this.mission();
+    const content = this.chatMessage().trim();
+    if (!currentMission || !content) return;
+
+    const role = this.activeRole();
+    const senderName = role === 'MANAGER'
+      ? (currentMission.managerUsername || 'Quản lý vận hành')
+      : (currentMission.assignedToUsername || 'Phi công phụ trách');
+
+    this.actionBusy.set(true);
+    this.api
+      .sendCommunication(currentMission.id, content, role, senderName)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.chatMessage.set('');
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            title: `[MF02 Tin nhắn] ${senderName} (${role === 'MANAGER' ? 'Quản lý' : 'Inspector'})`,
+            body: content,
+            type: 'MISSION_COMMUNICATION',
+            referenceType: 'MISSION',
+            referenceId: updated.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
   protected statusLabel(status: string): string {
     return (
       ({
+        PENDING_CONFIRMATION: 'Chờ Inspector xác nhận',
+        CONFIRMED: 'Đã xác nhận (Sẵn sàng bay)',
+        POSTPONED: 'Yêu cầu hoãn/Điều chỉnh',
+        SUSPENDED: 'Tạm đình chỉ bay',
+        Cancelled: 'Đã hủy',
         Pending: 'Chờ xử lý',
         Draft: 'Bản nháp',
         Assigned: 'Đã phân công',
         Preparing: 'Đang chuẩn bị',
-        Ready: 'Sẵn sàng',
-        Executing: 'Đang xử lý AI',
+        Ready: 'Sẵn sàng bay',
+        Executing: 'Đang thực hiện bay / AI',
         InProgress: 'Đang bay',
         'In Progress': 'Đang bay',
         Completed: 'Hoàn thành',
         Failed: 'Lỗi bay',
-        Cancelled: 'Đã hủy',
       } as Record<string, string>)[status] ?? status
     );
   }
 
   protected statusClass(status: string): string {
     const normalized = status.replace(/\s+/g, '');
-    if (['Failed', 'Error', 'Cancelled', 'Rejected'].includes(normalized)) return 'danger';
-    if (['Completed', 'Approved', 'Accepted'].includes(normalized)) return 'success';
-    if (['Executing', 'InProgress', 'Processing', 'AIProcessing'].includes(normalized)) return 'warning';
+    if (['Failed', 'Error', 'Cancelled', 'Rejected', 'SUSPENDED'].includes(normalized)) return 'danger';
+    if (['Completed', 'Approved', 'Accepted', 'CONFIRMED', 'Ready'].includes(normalized)) return 'success';
+    if (['Executing', 'InProgress', 'Processing', 'AIProcessing', 'PENDING_CONFIRMATION', 'POSTPONED'].includes(normalized)) return 'warning';
     return 'neutral';
   }
 
