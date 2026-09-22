@@ -223,7 +223,7 @@
                           <span nz-icon nzType="reload"></span>
                         }
                       </button>
-                      @if (item.status !== 'CONSUMED' && item.status !== 'CANCELLED') {
+                      @if (item.status !== 'COMPLETED' && item.status !== 'CONSUMED' && item.status !== 'CANCELLED') {
                         <button
                           type="button"
                           class="evn-btn secondary"

@@ -3,9 +3,8 @@ export type AssessmentStatus =
   | 'EVALUATING'
   | 'READY'
   | 'NOT_READY'
-  | 'INCOMPLETE'
   | 'EXPIRED'
-  | 'CONSUMED'
+  | 'COMPLETED'
   | 'CANCELLED'
   | string;
 
@@ -18,7 +17,7 @@ export interface ReadinessCheck {
 export interface SiteCheckItem {
   readonly code: string;
   readonly name: string;
-  readonly status: 'PASS' | 'WARNING' | 'FAIL' | 'INCOMPLETE';
+  readonly status: 'PASS' | 'WARNING' | 'FAIL';
   readonly details: string;
   readonly severity?: 'low' | 'medium' | 'high';
 }

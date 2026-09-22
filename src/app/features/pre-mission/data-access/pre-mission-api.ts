@@ -105,7 +105,13 @@ export class PreMissionApi {
           const merged: PreMissionAssessment = {
             ...result,
             consumedMissionId: local?.consumedMissionId ?? result.consumedMissionId,
-            status: local?.consumedMissionId ? 'CONSUMED' : (local?.status === 'CONSUMED' ? 'CONSUMED' : result.status),
+            status: local?.consumedMissionId
+              ? 'COMPLETED'
+              : (local?.status === 'COMPLETED' || local?.status === 'CONSUMED'
+                ? 'COMPLETED'
+                : (result.status === 'CONSUMED'
+                  ? 'COMPLETED'
+                  : (result.status === 'INCOMPLETE' ? 'NOT_READY' : result.status))),
           };
           saveLocalAssessment(merged);
           return merged;
@@ -246,16 +252,20 @@ export class PreMissionApi {
       );
   }
 
-  markConsumed(id: string, missionId: string): Observable<PreMissionAssessment> {
+  markCompleted(id: string, missionId: string): Observable<PreMissionAssessment> {
     const local = getLocalAssessment(id) || createSimulatedAssessmentById(id);
     const updated: PreMissionAssessment = {
       ...local,
       consumedMissionId: missionId,
-      status: 'CONSUMED',
+      status: 'COMPLETED',
       updatedAt: new Date().toISOString(),
     };
     saveLocalAssessment(updated);
     return of(updated);
+  }
+
+  markConsumed(id: string, missionId: string): Observable<PreMissionAssessment> {
+    return this.markCompleted(id, missionId);
   }
 
   runTechnicalInspection(droneId: string): Observable<DroneTechnicalInspectionResult> {
@@ -340,8 +350,10 @@ const stringOf = (value: unknown, fallback = '') =>
 
 const checkOf = (value: unknown) => {
   const x = objectOf(value);
+  let rawStatus = stringOf(x['status'], 'UNKNOWN');
+  if (rawStatus === 'INCOMPLETE') rawStatus = 'NOT_READY';
   return {
-    status: stringOf(x['status'], 'UNKNOWN'),
+    status: rawStatus,
     reason: x['reason'] == null ? null : stringOf(x['reason']),
     evaluatedAt: x['evaluatedAt'] == null ? null : stringOf(x['evaluatedAt']),
   };
@@ -470,7 +482,10 @@ const normalizeAssessment = (value: unknown): PreMissionAssessment => {
   const scopeAssetIds = arrayOf(x['scopeAssetIds']).length
     ? arrayOf(x['scopeAssetIds']).map(String)
     : assets.map((asset) => stringOf(objectOf(asset)['assetId'])).filter(Boolean);
-  const status = stringOf(x['status'], 'UNKNOWN');
+  let rawStatus = stringOf(x['status'], 'UNKNOWN');
+  if (rawStatus === 'CONSUMED') rawStatus = 'COMPLETED';
+  if (rawStatus === 'INCOMPLETE') rawStatus = 'NOT_READY';
+  const status = rawStatus;
   const isFeasible = status === 'READY' || status === 'EVALUATING';
   const derivedCheck = (ready: boolean) => ({
     status: ready ? 'PASS' : 'PENDING',

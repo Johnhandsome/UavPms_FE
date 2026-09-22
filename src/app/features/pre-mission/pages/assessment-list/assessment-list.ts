@@ -45,7 +45,7 @@ export class AssessmentList {
     { value: 'EVALUATING', label: 'Đang đánh giá (EVALUATING)' },
     { value: 'DRAFT', label: 'Bản nháp (DRAFT)' },
     { value: 'EXPIRED', label: 'Hết hạn (EXPIRED)' },
-    { value: 'CONSUMED', label: 'Đã tạo nhiệm vụ (CONSUMED)' },
+    { value: 'COMPLETED', label: 'Đã hoàn thành (COMPLETED)' },
     { value: 'CANCELLED', label: 'Đã hủy (CANCELLED)' },
   ];
 
@@ -92,8 +92,8 @@ export class AssessmentList {
       { label: 'Sẵn sàng (READY)', value: list.filter((x) => x.status === 'READY').length },
       { label: 'Chưa sẵn sàng (NOT_READY)', value: list.filter((x) => x.status === 'NOT_READY').length },
       {
-        label: 'Hết hạn / Tiêu thụ / Hủy',
-        value: list.filter((x) => x.status === 'EXPIRED' || x.status === 'CONSUMED' || x.status === 'CANCELLED').length,
+        label: 'Hết hạn / Hoàn thành / Hủy',
+        value: list.filter((x) => x.status === 'EXPIRED' || x.status === 'COMPLETED' || (x.status as string) === 'CONSUMED' || x.status === 'CANCELLED').length,
       },
     ];
   });
@@ -234,8 +234,8 @@ export class AssessmentList {
   protected cancelItem(item: PreMissionAssessment, event: Event): void {
     event.stopPropagation();
     if (this.actionBusyId()) return;
-    if (item.status === 'CONSUMED') {
-      this.error.set('Không thể hủy đánh giá đã được tiêu thụ tạo nhiệm vụ.');
+    if (item.status === 'COMPLETED' || (item.status as string) === 'CONSUMED') {
+      this.error.set('Không thể hủy đánh giá đã hoàn thành / tạo nhiệm vụ.');
       return;
     }
 

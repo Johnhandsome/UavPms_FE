@@ -95,15 +95,15 @@ Trong MF03 (Thực thi bay, Phân tích AI và Quản lý bảo trì lưới đi
 Trong MF01, nhiều vai trò cùng tham gia thẩm định 4 trụ cột an toàn bay (Mặt bằng & Khí tượng, Nhân sự, UAV, Kỹ thuật vi điều khiển):
 - Kỹ thuật viên (Technician) thực hiện chẩn đoán sức khỏe phần cứng UAV (Flight Controller, pin, cảm biến, RTK) ở Tab 5, nhưng Quản lý (Manager) ở Tab 1 (Tổng quan) không nhận được kết quả realtime, khiến nút *"Tạo nhiệm vụ (MF02)"* không tự mở khóa.
 - Khi Manager kích hoạt đánh giá lại (`evaluate()`), danh sách `assessment-list` không đổi màu trạng thái.
-- Đánh giá đã được tạo nhiệm vụ (`CONSUMED`) hoặc hết hạn (`validUntil`) không được đồng bộ tức thời giữa các tài khoản.
+- Đánh giá đã được tạo nhiệm vụ (`COMPLETED`) hoặc hết hạn (`validUntil`) không được đồng bộ tức thời giữa các tài khoản.
 
 ### Các điểm cần chỉnh sửa & triển khai (Requirements)
 - [ ] **1. Đồng bộ trạng thái thẩm định thời gian thực (`AssessmentStatusChanged`)**:
   - Khi kích hoạt đánh giá lại, phát sự kiện cập nhật trạng thái `READY` / `NOT_READY` / `EVALUATING` tới toàn bộ client đang mở `assessment-workspace` và `assessment-list`.
 - [ ] **2. Kết quả kiểm tra kỹ thuật UAV thời gian thực (`DroneInspectionCompleted`)**:
   - Khi Drone Technician chạy kiểm tra kỹ thuật thiết bị bay ở Tab 5: Cột mốc Technical tự động cập nhật sang `PASS` trên màn hình của Manager, đồng thời mở khóa nút *"Tạo nhiệm vụ (MF02)"* ngay lập tức.
-- [ ] **3. Cập nhật trạng thái tiêu thụ nhiệm vụ (`AssessmentConsumed`)**:
-  - Khi một bản ghi được tạo thành công nhiệm vụ bay MF02: Tự động cập nhật huy hiệu `#msn-xxxx` và chuyển trạng thái `CONSUMED` trên danh sách của các người dùng khác.
+- [ ] **3. Cập nhật trạng thái hoàn thành / tạo nhiệm vụ (`AssessmentCompleted`)**:
+  - Khi một bản ghi được tạo thành công nhiệm vụ bay MF02: Tự động cập nhật huy hiệu `#msn-xxxx` và chuyển trạng thái `COMPLETED` trên danh sách của các người dùng khác.
 - [ ] **4. Cảnh báo sức gió bề mặt thời gian thực (`MeteoAlertTriggered`)**:
   - Đẩy cảnh báo thời tiết vượt ngưỡng an toàn (sức gió > 10 m/s) làm đổi màu trụ cột Mặt bằng sang đỏ (`FAIL`) thời gian thực.
 

@@ -43,7 +43,7 @@
         <a class="evn-btn secondary" routerLink="/pre-mission" title="Về danh sách đánh giá">
           <span nz-icon nzType="unordered-list"></span> Danh sách
         </a>
-        @if (!isCancelled() && !isConsumed() && canManage()) {
+        @if (!isCancelled() && !isCompleted() && canManage()) {
           <button
             type="button"
             class="evn-btn secondary"
@@ -118,11 +118,11 @@
         <span nz-icon nzType="stop"></span>
         <span>Bản đánh giá tiền nhiệm vụ này đã bị hủy bỏ và không thể tiếp tục thực hiện.</span>
       </div>
-    } @else if (isConsumed()) {
+    } @else if (isCompleted()) {
       <div class="evn-alert" style="background: #f0fdf4; border-color: #86efac; color: #166534;" role="status">
         <span nz-icon nzType="check-circle"></span>
         <span>
-          Đánh giá này đã được sử dụng thành công để khởi tạo nhiệm vụ kiểm tra
+          Đánh giá này đã hoàn thành và được sử dụng để khởi tạo nhiệm vụ kiểm tra
           @if (a.consumedMissionId) {
             <a [routerLink]="['/missions', a.consumedMissionId]" style="font-weight: bold; text-decoration: underline; margin-left: 4px;">#{{ a.consumedMissionId }}</a>
           }.
@@ -892,7 +892,7 @@
         </span>
       </div>
       <div class="footer-right">
-        @if (!isCancelled() && !isConsumed() && canManage()) {
+        @if (!isCancelled() && !isCompleted() && canManage()) {
           <button
             type="button"
             class="evn-btn secondary"

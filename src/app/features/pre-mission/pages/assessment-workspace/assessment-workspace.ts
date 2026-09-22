@@ -99,12 +99,15 @@ export class AssessmentWorkspace implements AfterViewInit, OnDestroy {
     return this.item()?.status === 'CANCELLED';
   });
 
-  protected readonly isConsumed = computed(() => {
-    return this.item()?.status === 'CONSUMED';
+  protected readonly isCompleted = computed(() => {
+    const s = this.item()?.status;
+    return s === 'COMPLETED' || s === 'CONSUMED';
   });
 
+  protected readonly isConsumed = this.isCompleted;
+
   protected readonly canProceedToMf02 = computed(() => {
-    return this.isReady() && !this.isExpired() && !this.isConsumed() && !this.isCancelled();
+    return this.isReady() && !this.isExpired() && !this.isCompleted() && !this.isCancelled();
   });
 
   protected readonly failedConditions = computed(() => {
@@ -288,8 +291,8 @@ export class AssessmentWorkspace implements AfterViewInit, OnDestroy {
   protected cancelAssessment(): void {
     const a = this.item();
     if (!a || this.busy()) return;
-    if (a.status === 'CONSUMED') {
-      this.error.set('Không thể hủy đánh giá đã được chuyển tiếp tạo nhiệm vụ.');
+    if (a.status === 'COMPLETED' || (a.status as string) === 'CONSUMED') {
+      this.error.set('Không thể hủy đánh giá đã hoàn thành / tạo nhiệm vụ.');
       return;
     }
 

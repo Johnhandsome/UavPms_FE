@@ -648,9 +648,9 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
             timestamp: new Date().toISOString(),
           });
 
-          // Mark assessment consumed
+          // Mark assessment completed
           if (ass?.id) {
-            this.preMissionApi.markConsumed(ass.id, mission.id).subscribe({
+            this.preMissionApi.markCompleted(ass.id, mission.id).subscribe({
               error: () => {},
             });
           }
