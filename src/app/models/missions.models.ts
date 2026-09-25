@@ -17,7 +17,7 @@ export interface MissionCommunicationLog {
   readonly senderId: string;
   readonly senderName: string;
   readonly senderRole: 'MANAGER' | 'INSPECTOR' | 'SYSTEM';
-  readonly type: 'DISPATCH' | 'CONFIRM' | 'POSTPONE' | 'SUSPEND' | 'RESUME' | 'CANCEL' | 'REMINDER' | 'MESSAGE';
+  readonly type: 'DISPATCH' | 'CONFIRM' | 'POSTPONE' | 'SUSPEND' | 'RESUME' | 'CANCEL' | 'REMINDER' | 'MESSAGE' | 'START' | 'COMPLETE';
   readonly content: string;
   readonly timestamp: string;
   readonly metadata?: Record<string, unknown>;

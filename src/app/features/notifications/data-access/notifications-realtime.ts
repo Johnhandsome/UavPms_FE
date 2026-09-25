@@ -34,6 +34,8 @@ export type MissionLifecycleEventType =
   | 'CANCELLED'
   | 'REMINDER'
   | 'COMMUNICATION'
+  | 'STARTED'
+  | 'COMPLETED'
   | 'OVERDUE';
 
 export interface MissionLifecycleRealtimeEvent {

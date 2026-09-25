@@ -187,6 +187,23 @@
                           <span nz-icon nzType="swap"></span> Thay thế nhân sự
                         </button>
                       </div>
+                    } @else if (member.responseStatus !== 'ACCEPTED' && (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending')) {
+                      <div class="member-decision-actions">
+                        <button
+                          type="button"
+                          class="btn-member-accept"
+                          [disabled]="actionBusy()"
+                          (click)="acceptMemberAssignment(member)">
+                          <span nz-icon nzType="check"></span> Nhận việc
+                        </button>
+                        <button
+                          type="button"
+                          class="btn-member-postpone"
+                          [disabled]="actionBusy()"
+                          (click)="openPostponeModal(member)">
+                          <span nz-icon nzType="clock-circle"></span> Xin hoãn
+                        </button>
+                      </div>
                     }
                   </div>
                 }
@@ -196,13 +213,34 @@
 
           <div class="dispatch-actions-col">
             <div class="manager-action-buttons">
+              <!-- Flight Lifecycle Actions (Start & Complete Flight) -->
+              @if (mission.status === 'CONFIRMED' || mission.status === 'Assigned' || mission.status === 'Ready') {
+                <button
+                  type="button"
+                  class="btn-flight-start"
+                  [disabled]="actionBusy()"
+                  (click)="startFlight()">
+                  <span nz-icon nzType="send"></span> Bắt đầu bay (Start Flight)
+                </button>
+              }
+
+              @if (mission.status === 'Executing' || mission.status === 'InProgress') {
+                <button
+                  type="button"
+                  class="btn-flight-complete"
+                  [disabled]="actionBusy()"
+                  (click)="completeFlight()">
+                  <span nz-icon nzType="check-square"></span> Hoàn tất chuyến bay (Complete Flight)
+                </button>
+              }
+
               @if (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending') {
                 <button
                   type="button"
                   class="btn-manager-primary"
                   [disabled]="actionBusy()"
                   (click)="sendReminder()">
-                  <span nz-icon nzType="bell"></span> Gửi nhắc nhở Inspector
+                  <span nz-icon nzType="bell"></span> Gửi nhắc nhở tiếp nhận
                 </button>
               }
 
@@ -1103,8 +1141,13 @@
             <button type="button" class="btn-modal-close" (click)="closePostponeModal()">&times;</button>
           </div>
           <div class="modal-body">
+            @if (selectedAssignmentToPostpone(); as asg) {
+              <div class="reassign-current-box" style="margin-bottom: 10px;">
+                <div>Vai trò xin hoãn: <strong>[{{ asg.assignmentRole }}] {{ asg.userFullName || asg.userName }}</strong></div>
+              </div>
+            }
             <p class="modal-desc">
-              Vui lòng nêu rõ lý do xin hoãn để Quản lý vận hành có căn cứ phê duyệt hoặc điều chuyển phi công khác (ví dụ: thời tiết cực đoan, pin UAV gặp sự cố, trùng lịch kiểm tra đột xuất...).
+              Vui lòng nêu rõ lý do xin hoãn để Quản lý vận hành có căn cứ phê duyệt hoặc điều chuyển nhân sự khác (ví dụ: thời tiết cực đoan, pin UAV gặp sự cố, trùng lịch kiểm tra đột xuất...).
             </p>
             <div class="form-field-group">
               <label for="postponeReasonInput">Lý do xin hoãn <span class="required">*</span></label>
