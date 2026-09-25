@@ -14,11 +14,18 @@ import {
   ViewEncapsulation,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import * as L from 'leaflet';
 import { catchError, finalize, of } from 'rxjs';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { Mission, MissionCommunicationLog } from '../../../../models/missions.models';
+import {
+  Mission,
+  MissionAssignment,
+  MissionCommunicationLog,
+  MissionOperationalRole,
+} from '../../../../models/missions.models';
+import { UserRecord } from '../../../../models/users.models';
 import { AssetManagementApi, DetectionReviewDecision, MissionAiDetection } from '../../../assets/data-access/asset-management-api';
 import {
   AiAnalysisStatusChangedEvent,
@@ -26,6 +33,7 @@ import {
   NotificationsRealtime,
 } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
+import { UsersApi } from '../../../users/data-access/users-api';
 import { NotificationsStore } from '../../../notifications/data-access/notifications-store';
 import { Auth } from '../../../../core/auth/auth';
 
@@ -127,7 +135,7 @@ export interface MissionMaintenanceTask {
 
 @Component({
   selector: 'app-mission-detail',
-  imports: [DatePipe, RouterLink, NzIconModule],
+  imports: [DatePipe, RouterLink, NzIconModule, FormsModule],
   templateUrl: './mission-detail.html',
   styleUrl: './mission-detail.scss',
   encapsulation: ViewEncapsulation.None,
@@ -135,6 +143,7 @@ export interface MissionMaintenanceTask {
 })
 export class MissionDetail {
   private readonly api = inject(MissionsApi);
+  private readonly usersApi = inject(UsersApi);
   private readonly assetApi = inject(AssetManagementApi);
   private readonly realtime = inject(NotificationsRealtime);
   private readonly route = inject(ActivatedRoute);
@@ -178,6 +187,48 @@ export class MissionDetail {
   protected readonly cancelReason = signal('');
   protected readonly chatMessage = signal('');
   protected readonly currentTime = signal(Date.now());
+
+  // Multi-Role Team & Reassign State (MF02)
+  protected readonly availableUsers = signal<readonly UserRecord[]>([]);
+  protected readonly showReassignModal = signal<boolean>(false);
+  protected readonly selectedAssignmentToReassign = signal<MissionAssignment | null>(null);
+  protected readonly reassignNewUserId = signal<string>('');
+  protected readonly reassignReason = signal<string>('');
+
+  protected readonly multiRoleTeam = computed<readonly MissionAssignment[]>(() => {
+    return this.mission()?.team ?? [];
+  });
+
+  protected readonly allRolesConfirmed = computed<boolean>(() => {
+    return this.mission()?.allConfirmed ?? false;
+  });
+
+  protected readonly confirmationProgressPct = computed<number>(() => {
+    return Math.round(Number(this.mission()?.confirmationProgress ?? 0) * 100);
+  });
+
+  protected readonly postponedMember = computed<MissionAssignment | null>(() => {
+    return this.multiRoleTeam().find((m) => m.responseStatus === 'POSTPONED') ?? null;
+  });
+
+  protected readonly reassignCandidatePool = computed<readonly UserRecord[]>(() => {
+    const assignment = this.selectedAssignmentToReassign();
+    if (!assignment) return this.availableUsers();
+    const targetRole = (assignment.assignmentRole || '').toLowerCase();
+    return this.availableUsers().filter((u) => {
+      const userRole = (u.role || '').toLowerCase();
+      if (targetRole.includes('inspector') || targetRole.includes('pilot')) {
+        return userRole.includes('inspector') || userRole.includes('pilot') || userRole.includes('phi công');
+      }
+      if (targetRole.includes('analyst')) {
+        return userRole.includes('analyst') || userRole.includes('phân tích') || userRole.includes('dữ liệu');
+      }
+      if (targetRole.includes('tech')) {
+        return userRole.includes('tech') || userRole.includes('kỹ thuật') || userRole.includes('bảo trì');
+      }
+      return true;
+    });
+  });
 
   protected readonly confirmationDeadlineDate = computed(() => {
     const m = this.mission();
@@ -390,42 +441,14 @@ export class MissionDetail {
     },
   ]);
 
-  // Mission Maintenance Recommendations
-  protected readonly maintenanceTasks = signal<readonly MissionMaintenanceTask[]>([
-    {
-      id: 'maint-01',
-      title: 'Thay thế khẩn cấp bát sứ nứt vỡ chuỗi néo pha B',
-      priority: 'Urgent',
-      towerCode: 'Cột 042 (TOW-220KV-042)',
-      assetCode: 'INS-220KV-042-PHA-B',
-      defectDescription: 'Bát sứ số 4 chuỗi néo bị nứt vỡ bề mặt có nguy cơ phóng điện rã lưới.',
-      suggestedAction: 'Cắt điện xuất tuyến, điều xe gầu chuyên dụng thay mới chuỗi cách điện polymer 220kV trong 24h.',
-      status: 'Approved',
-      assignedTeam: 'Đội Truyền tải Điện Hà Nội 1',
-    },
-    {
-      id: 'maint-02',
-      title: 'Xiết bu lông thanh giằng góc và bổ sung đai ốc hãm',
-      priority: 'High',
-      towerCode: 'Cột 042 (TOW-220KV-042)',
-      assetCode: 'BOLT-TOW-042-X1',
-      defectDescription: 'Bu lông thanh giằng chữ V xà đỡ bị lỏng đai ốc do rung động gió.',
-      suggestedAction: 'Kiểm tra mô-men siết toàn bộ liên kết xà, tra mỡ bảo vệ chống gỉ.',
-      status: 'Pending',
-      assignedTeam: 'Tổ Quản lý Vận hành Đường dây',
-    },
-    {
-      id: 'maint-03',
-      title: 'Phát quang cây vi phạm khoảng cách pha - đất',
-      priority: 'Medium',
-      towerCode: 'Khoảng cột 041 - 042',
-      assetCode: 'VEG-SPAN-041-042',
-      defectDescription: 'Ngọn cây bạch đàn phát triển sát hành lang dây dẫn pha dưới < 3.5m.',
-      suggestedAction: 'Phối hợp chính quyền địa phương chặt hạ cây cao nguy hiểm.',
-      status: 'InProgress',
-      assignedTeam: 'Đội Bảo dưỡng Hành lang Tuyến',
-    },
-  ]);
+  // Mission Maintenance Recommendations (Derived from Approved Detections or Mission Maintenance API)
+  protected readonly maintenanceTasks = signal<readonly MissionMaintenanceTask[]>([]);
+  protected readonly criticalAssetCount = computed(
+    () => this.missionAssets().filter((a) => a.healthScore > 0 && a.healthScore < 40).length,
+  );
+  protected readonly stableAssetCount = computed(
+    () => this.missionAssets().filter((a) => a.healthScore >= 80).length,
+  );
 
   private resizeStartX = 0;
   private resizeStartWidth = 400;
@@ -443,6 +466,14 @@ export class MissionDetail {
     const id = this.route.snapshot.paramMap.get('id') ?? '';
     const tab = this.route.snapshot.queryParamMap.get('tab');
     if (this.isTab(tab)) this.activeTab.set(tab);
+
+    this.usersApi
+      .getAll()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (users) => this.availableUsers.set(users),
+        error: () => {},
+      });
 
     this.realtime.status$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -553,6 +584,7 @@ export class MissionDetail {
       this.map = L.map(container, {
         zoomControl: false,
         attributionControl: false,
+        scrollWheelZoom: false,
       });
 
       L.control.zoom({ position: 'topright' }).addTo(this.map);
@@ -1042,6 +1074,73 @@ export class MissionDetail {
       });
   }
 
+  protected openReassignModal(assignment: MissionAssignment): void {
+    this.selectedAssignmentToReassign.set(assignment);
+    this.reassignReason.set('');
+    const pool = this.reassignCandidatePool();
+    const candidate = pool.find((u) => u.id !== assignment.userId) || pool[0];
+    this.reassignNewUserId.set(candidate?.id || '');
+    this.showReassignModal.set(true);
+  }
+
+  protected closeReassignModal(): void {
+    this.showReassignModal.set(false);
+    this.selectedAssignmentToReassign.set(null);
+  }
+
+  protected submitReassign(): void {
+    const currentMission = this.mission();
+    const assignment = this.selectedAssignmentToReassign();
+    const newUserId = this.reassignNewUserId();
+    const reason = this.reassignReason().trim();
+    if (!currentMission || !assignment || !newUserId || this.actionBusy()) return;
+
+    this.actionBusy.set(true);
+    this.api
+      .reassignAssignment(currentMission.id, assignment.id, newUserId, reason)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        finalize(() => this.actionBusy.set(false)),
+      )
+      .subscribe({
+        next: (updated) => {
+          this.mission.set(updated);
+          this.showReassignModal.set(false);
+          const newUser = this.availableUsers().find((u) => u.id === newUserId);
+          const newName = newUser?.fullName || newUser?.email || 'Thành viên mới';
+          this.actionMessage.set(`Đã tái phân công vai trò ${assignment.assignmentRole} cho ${newName}.`);
+
+          this.notificationsStore.upsert({
+            id: `notif-${Date.now()}`,
+            userId: newUserId,
+            title: `[MF02 TÁI PHÂN CÔNG] Bạn được chỉ định vai trò ${assignment.assignmentRole}`,
+            body: `Quản lý đã tái phân công bạn cho nhiệm vụ ${currentMission.missionCode}. Vui lòng kiểm tra và xác nhận.`,
+            type: 'MISSION_DISPATCH',
+            referenceType: 'MISSION',
+            referenceId: currentMission.id,
+            createdAt: new Date().toISOString(),
+            isRead: false,
+          });
+
+          this.realtime.broadcastMissionEvent({
+            missionId: currentMission.id,
+            type: 'REASSIGNED',
+            status: updated.status,
+            actorRole: 'MANAGER',
+            actorName: this.auth.user()?.fullName || 'Quản lý vận hành',
+            assignmentId: assignment.id,
+            reason: reason || 'Thay thế nhân sự xin hoãn',
+            allConfirmed: updated.allConfirmed,
+            confirmedCount: updated.confirmedCount,
+            totalRequiredCount: updated.totalRequiredCount,
+            pendingRoles: updated.pendingRoles,
+            timestamp: new Date().toISOString(),
+          });
+        },
+        error: (err: unknown) => this.actionMessage.set(this.errorMessage(err)),
+      });
+  }
+
   protected openSuspendModal(): void {
     this.suspendReason.set('');
     this.showSuspendModal.set(true);
@@ -1342,100 +1441,7 @@ export class MissionDetail {
       )
       .subscribe({
         next: (detections) => {
-          let mapped = detections.map((item) => this.mapDetection(item));
-          if (!mapped.length) {
-            // Provide rich sample detections for mission inspection view
-            mapped = [
-              {
-                id: 'det-mis-01',
-                mediaId: 'med-01',
-                title: 'Bát cách điện nứt vỡ (Broken Insulator)',
-                confidence: 94,
-                timestampLabel: '00:12',
-                timestampSeconds: 12,
-                frameIndex: 360,
-                videoDurationLabel: '00:12',
-                status: 'Pending',
-                mediaStatus: 'Completed',
-                categoryCode: 'DEF-INS-CRACK',
-                severityWeight: 5,
-                isEmergency: true,
-                aiSource: 'YOLOv8-PowerGrid-X',
-                mediaType: 'video',
-                sourceUrl: '/images/defect-preview-frame.png',
-                imageUrl: '/images/defect-insulator-crack.png',
-                cropImageUrl: '/images/defect-insulator-crack.png',
-                boundingBox: { x: 36, y: 26, width: 26, height: 32 },
-                missionId,
-                assetId: 'INS-220KV-042-PHA-B',
-                tower: 'Cột 042 (TOW-220KV-042)',
-                gps: '20°58\'14.2"N 105°48\'22.6"E',
-                description: 'Vết nứt bề mặt đĩa sứ cách điện chuỗi đỡ néo pha B, nguy cơ phóng điện cao.',
-                notes: '',
-                detectedAt: new Date().toISOString(),
-                validatedAt: '',
-              },
-              {
-                id: 'det-mis-02',
-                mediaId: 'med-01',
-                title: 'Bung lỏng bu lông xà (Missing Bolt)',
-                confidence: 88,
-                timestampLabel: '00:24',
-                timestampSeconds: 24,
-                frameIndex: 720,
-                videoDurationLabel: '00:24',
-                status: 'Pending',
-                mediaStatus: 'Completed',
-                categoryCode: 'DEF-BOLT-LOOSE',
-                severityWeight: 3,
-                isEmergency: false,
-                aiSource: 'YOLOv8-PowerGrid-X',
-                mediaType: 'video',
-                sourceUrl: '/images/defect-preview-frame.png',
-                imageUrl: '/images/defect-bolt-missing.png',
-                cropImageUrl: '/images/defect-bolt-missing.png',
-                boundingBox: { x: 50, y: 38, width: 20, height: 24 },
-                missionId,
-                assetId: 'BOLT-TOW-042-X1',
-                tower: 'Cột 042 (TOW-220KV-042)',
-                gps: '20°58\'14.4"N 105°48\'22.8"E',
-                description: 'Thiếu đai ốc hãm tại liên kết thanh giằng chữ V của thân cột.',
-                notes: '',
-                detectedAt: new Date().toISOString(),
-                validatedAt: '',
-              },
-              {
-                id: 'det-mis-03',
-                mediaId: 'med-01',
-                title: 'Cây vi phạm hành lang an toàn (Corridor Tree)',
-                confidence: 96,
-                timestampLabel: '00:48',
-                timestampSeconds: 48,
-                frameIndex: 1440,
-                videoDurationLabel: '00:48',
-                status: 'Pending',
-                mediaStatus: 'Completed',
-                categoryCode: 'DEF-VEG-CLEARANCE',
-                severityWeight: 4,
-                isEmergency: true,
-                aiSource: 'YOLOv8-PowerGrid-X',
-                mediaType: 'video',
-                sourceUrl: '/images/defect-preview-frame.png',
-                imageUrl: '/images/defect-corridor-tree.png',
-                cropImageUrl: '/images/defect-corridor-tree.png',
-                boundingBox: { x: 58, y: 52, width: 32, height: 38 },
-                missionId,
-                assetId: 'VEG-SPAN-041-042',
-                tower: 'Khoảng cột 041 - 042',
-                gps: '20°58\'18.1"N 105°48\'26.3"E',
-                description: 'Ngọn cây bạch đàn phát triển sát dây dẫn pha dưới, khoảng cách an toàn < 3.2m.',
-                notes: '',
-                detectedAt: new Date().toISOString(),
-                validatedAt: '',
-              },
-            ];
-          }
-
+          const mapped = detections.map((item) => this.mapDetection(item));
           this.resultPage.set(1);
           this.detections.set(mapped);
           this.selectedDetection.set(mapped[0] ?? null);
@@ -1533,19 +1539,62 @@ export class MissionDetail {
     }
 
     if (event.type === 'CONFIRMED') {
-      this.mission.update((curr) => curr ? {
-        ...curr,
-        status: 'CONFIRMED',
-        confirmedAt: event.timestamp || new Date().toISOString(),
-      } : null);
-      this.actionMessage.set(`[THỰC THỜI] Phi công ${event.actorName || 'Inspector'} đã xác nhận tiếp nhận nhiệm vụ! Sẵn sàng bay.`);
+      this.mission.update((curr) => {
+        if (!curr) return null;
+        let updatedTeam = curr.team;
+        if (event.assignmentId && curr.team) {
+          updatedTeam = curr.team.map((a) =>
+            a.id === event.assignmentId
+              ? { ...a, responseStatus: 'ACCEPTED' as const, respondedAt: event.timestamp || new Date().toISOString() }
+              : a,
+          );
+        }
+        const totalReq = event.totalRequiredCount ?? curr.totalRequiredCount ?? (updatedTeam ? updatedTeam.length : 3);
+        const confCount = event.confirmedCount ?? (updatedTeam ? updatedTeam.filter((a) => a.responseStatus === 'ACCEPTED').length : 1);
+        const isAllConfirmed = event.allConfirmed ?? (confCount >= totalReq);
+
+        return {
+          ...curr,
+          status: isAllConfirmed ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
+          confirmedAt: isAllConfirmed ? (event.timestamp || new Date().toISOString()) : (curr.confirmedAt ?? null),
+          allConfirmed: isAllConfirmed,
+          confirmedCount: confCount,
+          totalRequiredCount: totalReq,
+          confirmationProgress: totalReq > 0 ? confCount / totalReq : 0,
+          team: updatedTeam,
+        };
+      });
+
+      if (event.allConfirmed) {
+        this.actionMessage.set(`[THỰC THỜI] 100% các vai trò (Inspector, Analyst, Technician) đã chấp thuận! Nhiệm vụ ${event.missionId} chính thức SẴN SÀNG BAY.`);
+      } else {
+        this.actionMessage.set(`[THỰC THỜI] ${event.actorName || 'Thành viên'} (${event.actorRole || 'Thành viên'}) đã xác nhận tiếp nhận. (${event.confirmedCount ?? 1}/${event.totalRequiredCount ?? 3} đã xác nhận).`);
+      }
     } else if (event.type === 'POSTPONED') {
-      this.mission.update((curr) => curr ? {
-        ...curr,
-        status: 'POSTPONED',
-        postponeReason: event.reason || curr.postponeReason,
-      } : null);
-      this.actionMessage.set(`[CẢNH BÁO THỰC THỜI] Phi công ${event.actorName || 'Inspector'} yêu cầu hoãn nhiệm vụ: "${event.reason || ''}".`);
+      this.mission.update((curr) => {
+        if (!curr) return null;
+        let updatedTeam = curr.team;
+        if (event.assignmentId && curr.team) {
+          updatedTeam = curr.team.map((a) =>
+            a.id === event.assignmentId
+              ? { ...a, responseStatus: 'POSTPONED' as const, responseReason: event.reason }
+              : a,
+          );
+        }
+        return {
+          ...curr,
+          status: 'POSTPONED',
+          postponeReason: event.reason || curr.postponeReason,
+          team: updatedTeam,
+          requiresReassignment: true,
+        };
+      });
+      this.actionMessage.set(`[CẢNH BÁO THỰC THỜI] Thành viên ${event.actorName || 'Đội bay'} (${event.actorRole || ''}) yêu cầu hoãn: "${event.reason || ''}". Quản lý có thể tái phân công ngay vai trò này.`);
+    } else if (event.type === 'REASSIGNED') {
+      this.actionMessage.set(`[THỰC THỜI] Quản lý đã tái phân công nhân sự mới cho vai trò ${event.actorRole || 'Đội bay'}.`);
+      this.api.get(currentMission.id).subscribe({
+        next: (fresh) => this.mission.set(fresh),
+      });
     } else if (event.type === 'SUSPENDED') {
       this.mission.update((curr) => curr ? {
         ...curr,

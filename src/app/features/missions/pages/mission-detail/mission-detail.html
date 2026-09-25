@@ -10,16 +10,16 @@
       <div class="header-main-info">
         <div class="header-title-row">
           <strong class="header-mission-code">Nhiệm vụ: {{ mission.missionCode }}</strong>
-          <span class="mission-live-badge {{ statusClass(mission.status) }}">{{ statusLabel(mission.status) }}</span>
+          <span class="mission-live-badge status-primary">{{ statusLabel(mission.status) }}</span>
           @if (mission.priority; as priority) {
-            <span class="priority-tag {{ priority.toLowerCase() }}">{{ priority }}</span>
+            <span class="priority-tag">{{ priority }}</span>
           }
         </div>
         <p class="header-sub-desc">{{ mission.title || mission.description }}</p>
       </div>
       <div class="mission-live-actions">
         @if (mission.sourceAssessmentId) {
-          <a [routerLink]="['/pre-mission', mission.sourceAssessmentId]" class="btn-back-link" style="margin-right: 8px;">
+          <a [routerLink]="['/pre-mission', mission.sourceAssessmentId]" class="btn-back-link">
             <span nz-icon nzType="file-done"></span> Hồ sơ tiền nhiệm vụ
           </a>
         }
@@ -80,11 +80,11 @@
                 <strong class="meta-value">{{ mission.droneCode || 'UAV-01' }}</strong>
               </div>
               <div class="meta-item">
-                <span class="meta-label">Hạn chót Inspector xác nhận:</span>
+                <span class="meta-label">Hạn chót các vai trò xác nhận:</span>
                 @if (confirmationDeadlineDate(); as deadline) {
                   @if (isDeadlineOverdue()) {
                     <span class="deadline-chip overdue">
-                      <span nz-icon nzType="warning" nzTheme="fill"></span>
+                      <span nz-icon nzType="warning"></span>
                       QUÁ HẠN: {{ deadlineTimeRemaining() }} ({{ deadline | date:'HH:mm dd/MM/yyyy' }})
                     </span>
                   } @else if (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending') {
@@ -94,22 +94,101 @@
                     </span>
                   } @else if (mission.status === 'CONFIRMED') {
                     <span class="deadline-chip confirmed">
-                      <span nz-icon nzType="check-circle" nzTheme="fill"></span>
-                      Phi công đã tiếp nhận · Sẵn sàng bay
+                      <span nz-icon nzType="check-circle"></span>
+                      Toàn đội đã tiếp nhận · Sẵn sàng bay
                     </span>
                   } @else if (mission.status === 'POSTPONED') {
                     <span class="deadline-chip postponed">
-                      <span nz-icon nzType="exclamation-circle" nzTheme="fill"></span>
-                      Phi công yêu cầu hoãn
+                      <span nz-icon nzType="exclamation-circle"></span>
+                      Có thành viên yêu cầu hoãn
                     </span>
                   } @else if (mission.status === 'SUSPENDED') {
                     <span class="deadline-chip suspended">
-                      <span nz-icon nzType="pause-circle" nzTheme="fill"></span>
+                      <span nz-icon nzType="pause-circle"></span>
                       Đang tạm đình chỉ bay
                     </span>
                   }
                 } @else {
                   <span class="meta-value">Chưa thiết lập</span>
+                }
+              </div>
+            </div>
+
+            <!-- Multi-Role Team Progress & Member Matrix -->
+            <div class="multi-role-team-matrix">
+              <div class="team-matrix-header">
+                <div class="team-matrix-title">
+                  <span nz-icon nzType="team"></span>
+                  <strong>Đội ngũ thực thi (3 Vai trò bắt buộc: Inspector, Analyst, Technician)</strong>
+                  <span class="confirmed-ratio">
+                    Đã xác nhận: <strong>{{ mission.confirmedCount || 0 }}/{{ mission.totalRequiredCount || 3 }}</strong>
+                  </span>
+                </div>
+                <div class="team-matrix-status">
+                  @if (allRolesConfirmed()) {
+                    <span class="matrix-status-pill">100% ĐÃ XÁC NHẬN</span>
+                  } @else if (postponedMember()) {
+                    <span class="matrix-status-pill">CÓ THÀNH VIÊN HOÃN</span>
+                  } @else {
+                    <span class="matrix-status-pill">ĐANG CHỜ TIẾP NHẬN</span>
+                  }
+                </div>
+              </div>
+
+              <!-- Progress bar -->
+              <div class="matrix-progress-track">
+                <div class="matrix-progress-fill" [style.width.%]="confirmationProgressPct()"></div>
+              </div>
+
+              <!-- Member cards list -->
+              <div class="matrix-members-grid">
+                @for (member of multiRoleTeam(); track member.id || member.assignmentRole) {
+                  <div class="matrix-member-card">
+                    <div class="member-card-top">
+                      <span class="member-role-badge">
+                        {{ member.assignmentRole }}
+                      </span>
+                      <span class="member-status-text">
+                        @switch (member.responseStatus) {
+                          @case ('ACCEPTED') {
+                            <span nz-icon nzType="check-circle"></span> Đã chấp thuận
+                          }
+                          @case ('POSTPONED') {
+                            <span nz-icon nzType="exclamation-circle"></span> Báo hoãn
+                          }
+                          @default {
+                            <span nz-icon nzType="clock-circle"></span> Chờ phản hồi
+                          }
+                        }
+                      </span>
+                    </div>
+
+                    <div class="member-name">
+                      {{ member.userFullName || member.userName || 'Thành viên' }}
+                    </div>
+
+                    @if (member.responseReason) {
+                      <p class="member-reason">
+                        “{{ member.responseReason }}”
+                      </p>
+                    }
+                    @if (member.respondedAt) {
+                      <div class="member-time">
+                        Phản hồi: {{ member.respondedAt | date:'HH:mm dd/MM' }}
+                      </div>
+                    }
+
+                    @if (member.responseStatus === 'POSTPONED') {
+                      <div class="member-reassign-action">
+                        <button
+                          type="button"
+                          class="btn-member-reassign"
+                          (click)="openReassignModal(member)">
+                          <span nz-icon nzType="swap"></span> Thay thế nhân sự
+                        </button>
+                      </div>
+                    }
+                  </div>
                 }
               </div>
             </div>
@@ -374,9 +453,9 @@
                           <div><dt>Độ phân giải</dt><dd class="font-mono">{{ current.resolution }}</dd></div>
                           @if (current.kind === 'video') {
                             <div><dt>Tốc độ khung hình</dt><dd>{{ current.fps }}</dd></div>
-                            <div><dt>Thời lượng</dt><dd class="font-mono font-bold text-blue-700">{{ current.duration }}</dd></div>
+                            <div><dt>Thời lượng</dt><dd class="font-mono font-bold">{{ current.duration }}</dd></div>
                           }
-                          <div><dt>Trạng thái</dt><dd class="text-blue-700 font-semibold">{{ current.status }}</dd></div>
+                          <div><dt>Trạng thái</dt><dd class="font-semibold">{{ current.status }}</dd></div>
                         </dl>
                       </div>
                     }
@@ -441,7 +520,7 @@
                     <span role="cell">{{ media.size }}</span>
                     <span role="cell" class="font-mono">{{ media.resolution }}</span>
                     <span role="cell" [class]="'upload-status ' + (media.progress >= 100 ? 'done' : media.progress > 0 ? 'uploading' : 'pending')"><i></i>{{ media.status }}</span>
-                    <span role="cell" class="font-bold text-xs uppercase">{{ media.kind }}</span>
+                    <span role="cell" class="font-bold uppercase font-mono">{{ media.kind }}</span>
                   </div>
                 } @empty {
                   <div class="queue-row" role="row"><span role="cell" class="file-name">Chưa chọn file nào</span><span role="cell">-</span><span role="cell">-</span><span role="cell">-</span><span role="cell">-</span></div>
@@ -493,7 +572,7 @@
                     <div>
                       <h3 [title]="media.name">{{ middleEllipsis(media.name, 34) }}</h3>
                       <p>{{ media.size }} - {{ media.kind }} - {{ media.resolution }}</p>
-                      <small class="text-blue-700 font-semibold">{{ media.status }}</small>
+                      <small class="font-semibold">{{ media.status }}</small>
                     </div>
                   </article>
                 }
@@ -548,7 +627,12 @@
                   }
                 </div>
               } @else if (!detections().length) {
-                <p class="mission-ai-message">Chưa có kết quả AI cho nhiệm vụ này.</p>
+                <div class="mission-ai-empty-panel">
+                  <span nz-icon nzType="inbox" class="empty-icon"></span>
+                  <h3>Chưa có dữ liệu Giám định AI</h3>
+                  <p>Nhiệm vụ chưa hoàn thành bay khảo sát hoặc chưa nạp ảnh/video UAV để chạy mô hình AI.</p>
+                  <small>Dữ liệu khuyết tật sẽ tự động xuất hiện tại đây sau khi tiến trình phân tích AI hoàn tất.</small>
+                </div>
               } @else {
                 <!-- Grid of Detections -->
                 <div class="detection-grid">
@@ -634,7 +718,7 @@
                       <div class="mission-timeline-track-wrap" aria-label="Timeline phát hiện lỗi">
                         <div class="timeline-meta-head">
                           <span class="timeline-title"><span nz-icon nzType="field-time"></span> Timeline phát hiện:</span>
-                          <span class="font-mono text-xs">{{ formatTime(videoCurrentTime()) }} / {{ formatTime(videoDuration() || 60) }}</span>
+                          <span class="font-mono">{{ formatTime(videoCurrentTime()) }} / {{ formatTime(videoDuration() || 60) }}</span>
                         </div>
 
                         <div
@@ -726,12 +810,12 @@
                     <div class="field-wide"><span>Loại khuyết tật</span><p class="defect-type-value">{{ selected.title }}</p></div>
                     <div class="field-wide"><span>Mô tả phát hiện</span><p>{{ selected.description }}</p></div>
                     <div class="confidence-field"><span>Độ tin cậy AI</span><div><i><b [style.width.%]="selected.confidence"></b></i><strong>{{ selected.confidence }}%</strong></div></div>
-                    <div><span>Vị trí Cột</span><p class="font-bold text-blue-700">{{ selected.tower }}</p></div>
-                    <div><span>Tọa độ GPS</span><p class="font-mono text-xs">{{ selected.gps }}</p></div>
+                    <div><span>Vị trí Cột</span><p class="font-bold">{{ selected.tower }}</p></div>
+                    <div><span>Tọa độ GPS</span><p class="font-mono">{{ selected.gps }}</p></div>
                     <div><span>Mã thiết bị</span><p class="font-mono">{{ selected.assetId }}</p></div>
                     <div><span>Mã danh mục</span><p class="font-mono">{{ selected.categoryCode }}</p></div>
                     <div><span>Thời điểm phát hiện</span><p class="font-mono">{{ selected.timestampLabel }} ({{ selected.detectedAt | date:'HH:mm:ss dd/MM/yyyy' }})</p></div>
-                    <div><span>Mức độ nguy cấp</span><p class="font-semibold text-blue-700">{{ selected.isEmergency ? '⚠ Khẩn cấp' : 'Bình thường' }}</p></div>
+                    <div><span>Mức độ nguy cấp</span><p class="font-semibold">{{ selected.isEmergency ? '⚠ Khẩn cấp' : 'Bình thường' }}</p></div>
                     <div class="field-wide"><span>Trạng thái kiểm duyệt</span><p>{{ detectionStatusLabel(selected.status) }}</p></div>
 
                     <label class="field-wide note-field">
@@ -760,9 +844,9 @@
                 <p>Theo dõi điểm sức khỏe thiết bị (Health Score 0-100) và số lượng bất thường ghi nhận.</p>
               </div>
               <div class="assets-kpi-summary">
-                <span>Tổng thiết bị: <strong>{{ missionAssets().length }}</strong></span>
-                <span class="text-red-600">Nguy cấp: <strong>1</strong></span>
-                <span class="text-green-600">Ổn định: <strong>3</strong></span>
+                <span class="kpi-chip">Tổng thiết bị: <strong>{{ missionAssets().length }}</strong></span>
+                <span class="kpi-chip">Nguy cấp: <strong>{{ criticalAssetCount() }}</strong></span>
+                <span class="kpi-chip">Ổn định: <strong>{{ stableAssetCount() }}</strong></span>
               </div>
             </header>
 
@@ -788,12 +872,12 @@
                       <td><span class="tower-tag"><span nz-icon nzType="environment"></span> {{ asset.towerCode }}</span></td>
                       <td>
                         <div class="health-score-cell">
-                          <strong [class.text-red-600]="asset.healthScore < 40" [class.text-orange-500]="asset.healthScore >= 40 && asset.healthScore < 60" [class.text-green-600]="asset.healthScore >= 80">{{ asset.healthScore }}/100</strong>
-                          <div class="score-mini-bar"><span [style.width.%]="asset.healthScore" [class.danger]="asset.healthScore < 40" [class.warn]="asset.healthScore >= 40 && asset.healthScore < 60" [class.good]="asset.healthScore >= 80"></span></div>
+                          <strong>{{ asset.healthScore }}/100</strong>
+                          <div class="score-mini-bar"><span [style.width.%]="asset.healthScore"></span></div>
                         </div>
                       </td>
                       <td>
-                        <span class="risk-badge-pill" [class.critical]="asset.riskLevel === 'Critical Risk'" [class.high]="asset.riskLevel === 'High Risk'" [class.medium]="asset.riskLevel === 'Medium Risk'" [class.low]="asset.riskLevel === 'Low Risk'">
+                        <span class="risk-badge-pill">
                           {{ asset.riskLevel }}
                         </span>
                       </td>
@@ -801,11 +885,11 @@
                         @if (asset.defectCount > 0) {
                           <span class="defect-badge-count">{{ asset.defectCount }} lỗi AI</span>
                         } @else {
-                          <span class="text-slate-400">0</span>
+                          <span>0</span>
                         }
                       </td>
                       <td>
-                        <span class="status-dot-text"><span class="dot" [class.green]="asset.status === 'Operational'" [class.orange]="asset.status === 'Maintenance'" [class.red]="asset.status === 'InspectionRequired'"></span>{{ asset.status }}</span>
+                        <span class="status-dot-text"><span class="dot"></span>{{ asset.status }}</span>
                       </td>
                       <td>{{ asset.lastInspected }}</td>
                     </tr>
@@ -825,28 +909,37 @@
               </div>
             </header>
 
-            <div class="maint-tasks-grid">
-              @for (task of maintenanceTasks(); track task.id) {
-                <div class="maint-task-card" [class.urgent]="task.priority === 'Urgent'" [class.high]="task.priority === 'High'">
-                  <div class="maint-task-head">
-                    <span class="priority-pill" [class.urgent]="task.priority === 'Urgent'" [class.high]="task.priority === 'High'" [class.medium]="task.priority === 'Medium'">
-                      {{ task.priority === 'Urgent' ? 'Ưu tiên khẩn cấp' : task.priority === 'High' ? 'Ưu tiên cao' : 'Ưu tiên trung bình' }}
-                    </span>
-                    <span class="task-status-pill {{ task.status.toLowerCase() }}">{{ task.status }}</span>
-                  </div>
+            @if (!maintenanceTasks().length) {
+              <div class="mission-maint-empty-panel">
+                <span nz-icon nzType="tool" class="empty-icon"></span>
+                <h3>Chưa có Khuyến nghị Bảo dưỡng</h3>
+                <p>Chưa có khuyết tật nào được Phân tích viên (Analyst) xác nhận lỗi để lập phiếu công tác sửa chữa.</p>
+                <small>Khuyến nghị bảo dưỡng sẽ tự động đề xuất từ các phát hiện có trạng thái <strong>Đã duyệt (Approved)</strong>.</small>
+              </div>
+            } @else {
+              <div class="maint-tasks-grid">
+                @for (task of maintenanceTasks(); track task.id) {
+                  <div class="maint-task-card" [class.urgent]="task.priority === 'Urgent'" [class.high]="task.priority === 'High'">
+                    <div class="maint-task-head">
+                      <span class="priority-pill" [class.urgent]="task.priority === 'Urgent'" [class.high]="task.priority === 'High'" [class.medium]="task.priority === 'Medium'">
+                        {{ task.priority === 'Urgent' ? 'Ưu tiên khẩn cấp' : task.priority === 'High' ? 'Ưu tiên cao' : 'Ưu tiên trung bình' }}
+                      </span>
+                      <span class="task-status-pill {{ task.status.toLowerCase() }}">{{ task.status }}</span>
+                    </div>
 
-                  <h3 class="maint-task-title">{{ task.title }}</h3>
+                    <h3 class="maint-task-title">{{ task.title }}</h3>
 
-                  <div class="maint-task-info">
-                    <div><strong>Vị trí:</strong> <span>{{ task.towerCode }}</span></div>
-                    <div><strong>Thiết bị:</strong> <span class="font-mono">{{ task.assetCode }}</span></div>
-                    <div><strong>Hiện trạng:</strong> <span>{{ task.defectDescription }}</span></div>
-                    <div class="action-box"><strong>Biện pháp:</strong> <p>{{ task.suggestedAction }}</p></div>
-                    <div><strong>Đội xử lý:</strong> <span>{{ task.assignedTeam }}</span></div>
+                    <div class="maint-task-info">
+                      <div><strong>Vị trí:</strong> <span>{{ task.towerCode }}</span></div>
+                      <div><strong>Thiết bị:</strong> <span class="font-mono">{{ task.assetCode }}</span></div>
+                      <div><strong>Hiện trạng:</strong> <span>{{ task.defectDescription }}</span></div>
+                      <div class="action-box"><strong>Biện pháp:</strong> <p>{{ task.suggestedAction }}</p></div>
+                      <div><strong>Đội xử lý:</strong> <span>{{ task.assignedTeam }}</span></div>
+                    </div>
                   </div>
-                </div>
-              }
-            </div>
+                }
+              </div>
+            }
           </div>
 
         <!-- TAB 7: ACTIVITY & COMMUNICATION STREAM -->
@@ -898,9 +991,9 @@
                 <div class="composer-sender-indicator">
                   <span>Gửi tin nhắn dưới quyền:</span>
                   @if (activeRole() === 'MANAGER') {
-                    <strong class="text-blue-700 font-semibold"><span nz-icon nzType="safety-certificate"></span> {{ mission.managerUsername || 'Quản lý vận hành' }} (Manager)</strong>
+                    <strong class="font-semibold"><span nz-icon nzType="safety-certificate"></span> {{ mission.managerUsername || 'Quản lý vận hành' }} (Manager)</strong>
                   } @else {
-                    <strong class="text-emerald-700 font-semibold"><span nz-icon nzType="user"></span> {{ mission.assignedToUsername || 'Phi công phụ trách' }} (Inspector)</strong>
+                    <strong class="font-semibold"><span nz-icon nzType="user"></span> {{ mission.assignedToUsername || 'Phi công phụ trách' }} (Inspector)</strong>
                   }
                 </div>
                 <div class="composer-input-row">
@@ -945,29 +1038,31 @@
                   </div>
                 </div>
 
-                <div class="milestone-item" [class.completed]="mission.status === 'CONFIRMED' || mission.status === 'Executing' || mission.status === 'Completed'" [class.active]="mission.status === 'PENDING_CONFIRMATION'">
+                <div class="milestone-item" [class.completed]="allRolesConfirmed() || mission.status === 'CONFIRMED' || mission.status === 'Executing' || mission.status === 'Completed'" [class.active]="mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending'">
                   <span class="milestone-bullet"></span>
                   <div class="milestone-text">
-                    <strong>Inspector Xác nhận Tiếp nhận</strong>
-                    @if (mission.status === 'CONFIRMED' || mission.status === 'Executing' || mission.status === 'Completed') {
-                      <small class="text-green-600">Đã xác nhận sẵn sàng bay</small>
+                    <strong>Đội ngũ 3 Vai trò Tiếp nhận &amp; Xác nhận</strong>
+                    @if (allRolesConfirmed() || mission.status === 'CONFIRMED' || mission.status === 'Executing' || mission.status === 'Completed') {
+                      <small>Đã đủ 3 vai trò xác nhận sẵn sàng bay</small>
+                    } @else if (postponedMember()) {
+                      <small class="font-semibold">Có thành viên xin hoãn - Đang chờ tái phân công</small>
                     } @else if (isDeadlineOverdue()) {
-                      <small class="text-red-600 font-semibold">Đã quá hạn xác nhận</small>
+                      <small class="font-semibold">Đã quá hạn xác nhận</small>
                     } @else {
-                      <small class="text-amber-600">Đang chờ phi công phản hồi</small>
+                      <small>Đang chờ các thành viên phản hồi ({{ mission.confirmedCount || 0 }}/{{ mission.totalRequiredCount || 3 }})</small>
                     }
                   </div>
                 </div>
 
-                <div class="milestone-item" [class.completed]="mission.status === 'Executing' || mission.status === 'Completed'" [class.active]="mission.status === 'Executing'">
+                <div class="milestone-item" [class.completed]="mission.status === 'Completed'" [class.active]="mission.status === 'Executing'">
                   <span class="milestone-bullet"></span>
                   <div class="milestone-text">
                     <strong>Bay khảo sát &amp; Quét GIS Hiện trường</strong>
-                    <small>UAV bay theo hành lang an toàn đã định nghĩa</small>
+                    <small>{{ mission.status === 'Executing' ? 'Đang thực hiện bay ngoài hiện trường' : mission.status === 'Completed' ? 'Chuyến bay đã hoàn tất' : 'Chờ hoàn thành thủ tục xuất phát' }}</small>
                   </div>
                 </div>
 
-                <div class="milestone-item" [class.completed]="detections().length > 0" [class.active]="mediaQueue().length > 0 && detections().length === 0">
+                <div class="milestone-item" [class.completed]="detections().length > 0" [class.active]="mission.status === 'Completed' && mediaQueue().length > 0 && detections().length === 0">
                   <span class="milestone-bullet"></span>
                   <div class="milestone-text">
                     <strong>Nạp dữ liệu &amp; Chạy suy luận AI</strong>
@@ -975,11 +1070,11 @@
                   </div>
                 </div>
 
-                <div class="milestone-item" [class.completed]="approvedDetectionCount() > 0">
+                <div class="milestone-item" [class.completed]="approvedDetectionCount() > 0" [class.active]="detections().length > 0 && approvedDetectionCount() === 0">
                   <span class="milestone-bullet"></span>
                   <div class="milestone-text">
-                    <strong>Đồng bộ Chỉ số Sức khỏe Tài sản</strong>
-                    <small>Cập nhật tự động vào Asset Health Dashboard</small>
+                    <strong>Giám định &amp; Đồng bộ Sức khỏe Tài sản</strong>
+                    <small>{{ approvedDetectionCount() > 0 ? 'Đã duyệt ' + approvedDetectionCount() + ' khuyết tật & cập nhật bảo trì' : 'Chờ phân tích viên thẩm định kết quả AI' }}</small>
                   </div>
                 </div>
               </div>
@@ -1035,7 +1130,7 @@
             <button type="button" class="btn-modal-close" (click)="closeSuspendModal()">&times;</button>
           </div>
           <div class="modal-body">
-            <p class="modal-desc text-slate-700 font-medium">
+            <p class="modal-desc font-medium">
               Lệnh đình chỉ sẽ ngay lập tức được thông báo khẩn tới Inspector. Mọi hoạt động cất cánh của UAV trong khu vực hành lang lưới điện phải lập tức dừng lại.
             </p>
             <div class="form-field-group">
@@ -1072,7 +1167,7 @@
             <button type="button" class="btn-modal-close" (click)="closeCancelModal()">&times;</button>
           </div>
           <div class="modal-body">
-            <p class="modal-desc text-slate-700">
+            <p class="modal-desc">
               Nhiệm vụ sẽ được chuyển sang trạng thái <strong>Đã hủy</strong> và thu hồi phân công UAV cũng như nhân sự. Thao tác này không thể hoàn tác.
             </p>
             <div class="form-field-group">
@@ -1094,6 +1189,69 @@
               [disabled]="actionBusy() || !cancelReason().trim()"
               (click)="submitCancel()">
               Xác nhận hủy nhiệm vụ
+            </button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- MODAL 4: REASSIGN ROLE (Manager replaces a member when postponed/overdue) -->
+    @if (showReassignModal()) {
+      <div class="modal-overlay" (click)="closeReassignModal()">
+        <div class="modal-dialog" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="reassign-modal-title">
+          <div class="modal-header">
+            <h3 id="reassign-modal-title">
+              <span nz-icon nzType="usergroup-add"></span> Tái phân công vai trò: {{ selectedAssignmentToReassign()?.assignmentRole }}
+            </h3>
+            <button type="button" class="btn-modal-close" (click)="closeReassignModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            @if (selectedAssignmentToReassign(); as currAssign) {
+              <div class="reassign-current-box">
+                <div>Thành viên hiện tại: <strong>{{ currAssign.userFullName || currAssign.userName || 'Chưa xác định' }}</strong></div>
+                @if (currAssign.responseReason) {
+                  <div class="reassign-reason-text">
+                    Lý do xin hoãn: <em>"{{ currAssign.responseReason }}"</em>
+                  </div>
+                }
+              </div>
+            }
+
+            <div class="form-field-group">
+              <label for="reassignUserSelect">Chọn nhân sự thay thế đạt chuẩn 5 tiêu chí <span class="required">*</span></label>
+              <select
+                id="reassignUserSelect"
+                class="form-control-input"
+                [value]="reassignNewUserId()"
+                (change)="reassignNewUserId.set($any($event.target).value)">
+                <option value="" disabled>-- Chọn nhân sự thay thế --</option>
+                @for (u of reassignCandidatePool(); track u.id) {
+                  <option [value]="u.id">
+                    {{ u.fullName || u.email }} ({{ u.role || 'Chuyên môn' }})
+                  </option>
+                }
+              </select>
+            </div>
+
+            <div class="form-field-group">
+              <label for="reassignReasonInput">Ghi chú điều chuyển / Chỉ đạo bổ sung</label>
+              <textarea
+                id="reassignReasonInput"
+                rows="3"
+                class="form-control-textarea"
+                placeholder="Nhập lý do thay thế hoặc ghi chú cho nhân sự mới..."
+                [value]="reassignReason()"
+                (input)="reassignReason.set($any($event.target).value)"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-modal-cancel" (click)="closeReassignModal()">Hủy bỏ</button>
+            <button
+              type="button"
+              class="btn-modal-submit"
+              [disabled]="actionBusy() || !reassignNewUserId()"
+              (click)="submitReassign()">
+              <span nz-icon nzType="check"></span> Xác nhận tái phân công
             </button>
           </div>
         </div>
