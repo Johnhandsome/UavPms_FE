@@ -1,10 +1,11 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { catchError, map, Observable, of, switchMap, throwError } from 'rxjs';
+import { catchError, forkJoin, map, Observable, of, switchMap, throwError } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { unwrapApiData } from '../../../models/api.models';
 import {
   Mission,
+  MissionAssignment,
   MissionCommunicationLog,
   MissionCreateRequest,
   MissionMutationRequest,
@@ -237,41 +238,77 @@ export class MissionsApi {
   }
 
   create(request: MissionCreateRequest): Observable<Mission> {
+    const assessmentId = request.sourceAssessmentId || request.assessmentId;
+    const assignments =
+      request.assignments ||
+      request.personnel ||
+      (request.inspectorId ? [{ userId: request.inspectorId, role: 'INSPECTOR', isRequired: true }] : []);
+
     const createBody = {
-      title: request.name,
+      assessmentId,
+      title: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
+      name: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
       description: request.description,
       regionId: request.regionId,
       missionType: request.missionType,
       scheduleId: request.scheduleId || null,
       triggerReason: request.triggerReason || null,
-      plannedStart: request.scheduledAt,
+      plannedStart: request.scheduledAt || request.plannedStart,
       plannedEnd: request.plannedEnd,
       confirmationDeadline: request.confirmationDeadline,
       managerInstructions: request.managerInstructions,
-      sourceAssessmentId: request.sourceAssessmentId,
+      sourceAssessmentId: assessmentId,
+      droneId: request.droneId || (request.droneIds && request.droneIds[0]),
+      droneIds: request.droneIds || (request.droneId ? [request.droneId] : []),
+      assignments,
+      personnel: assignments,
+      targetAssetIds: request.targetAssetIds || [],
+      boundaryWkt: request.boundaryWkt,
+      idempotencyKey: request.idempotencyKey,
     };
 
-    return this.http.post<unknown>(this.url, createBody).pipe(
+    const mainEndpoint = assessmentId
+      ? `${environment.apiBaseUrl}/v2/pre-mission-assessments/${assessmentId}/create-mission`
+      : this.url;
+
+    return this.http.post<unknown>(mainEndpoint, createBody).pipe(
+      catchError(() => this.http.post<unknown>(this.url, createBody)),
       map((response) => {
         const data = unwrapApiData(response);
         return typeof data === 'string' ? data : stringValue(record(data)['id']);
       }),
       switchMap((missionId) =>
-        missionId
+        missionId && request.targetAssetIds && request.targetAssetIds.length > 0
           ? this.http
               .put(`${this.url}/${missionId}/assets`, { boundaryWkt: request.boundaryWkt, assetIds: request.targetAssetIds })
-              .pipe(map(() => missionId))
-          : throwError(() => new Error('Backend did not return the created mission ID.'))
+              .pipe(
+                map(() => missionId),
+                catchError(() => of(missionId))
+              )
+          : of(missionId)
       ),
+      switchMap((missionId) => {
+        if (!missionId) return throwError(() => new Error('Backend did not return the created mission ID.'));
+        if (assignments.length === 0) return of(missionId);
+        const assignCalls$ = assignments.map((a) =>
+          this.http
+            .post(`${this.url}/${missionId}/assignments`, {
+              userId: a.userId,
+              assignmentRole: a.role,
+              isRequired: a.isRequired !== false,
+            })
+            .pipe(catchError(() => of(null)))
+        );
+        return forkJoin(assignCalls$).pipe(map(() => missionId));
+      }),
       switchMap((missionId) =>
-        this.http
-          .post(`${this.url}/${missionId}/assignments`, {
-            userId: request.inspectorId,
-            assignmentRole: 'Inspector',
-          })
-          .pipe(map(() => missionId))
+        request.droneId
+          ? this.http.put(`${this.url}/${missionId}/drone`, { droneId: request.droneId }).pipe(
+              map(() => missionId),
+              catchError(() => of(missionId))
+            )
+          : of(missionId)
       ),
-      switchMap((missionId) => this.http.put(`${this.url}/${missionId}/drone`, { droneId: request.droneId }).pipe(map(() => missionId))),
       switchMap((missionId) => this.get(missionId)),
       catchError(() => {
         const sim = createSimulatedMission(request);
@@ -305,22 +342,67 @@ export class MissionsApi {
   }
 
   confirmMission(id: string, notes?: string): Observable<Mission> {
-    const now = new Date().toISOString();
-    const newLog: MissionCommunicationLog = {
-      id: `log-${Date.now()}`,
-      senderId: 'inspector-01',
-      senderName: 'Thanh tra viên / Phi công UAV',
-      senderRole: 'INSPECTOR',
-      type: 'CONFIRM',
-      content: `Thanh tra viên đã xác nhận tiếp nhận nhiệm vụ. Cam kết tuân thủ quy trình an toàn bay.${notes ? ` Ghi chú: "${notes}"` : ''}`,
-      timestamp: now,
-    };
+    return this.acceptAssignment(id, undefined, notes, 'INSPECTOR', 'Thanh tra viên / Phi công UAV');
+  }
 
-    return this.get(id).pipe(
+  acceptAssignment(
+    id: string,
+    assignmentId?: string,
+    notes?: string,
+    role = 'INSPECTOR',
+    userName = 'Thành viên đội ngũ'
+  ): Observable<Mission> {
+    const now = new Date().toISOString();
+    const endpoint = assignmentId
+      ? `${this.url}/${id}/assignments/${assignmentId}/accept`
+      : `${this.url}/${id}/assignments/accept`;
+
+    const apiCall$ = this.http.post<unknown>(endpoint, { notes }).pipe(
+      catchError(() => this.http.post<unknown>(`${this.url}/${id}/confirm`, { notes }))
+    );
+
+    return apiCall$.pipe(
+      catchError(() => of(null)),
+      switchMap(() => this.get(id)),
       map((m) => {
+        const team = (m.team || []).map((member) => {
+          const isTarget = assignmentId
+            ? member.id === assignmentId
+            : member.assignmentRole.toUpperCase() === role.toUpperCase();
+          if (isTarget) {
+            return {
+              ...member,
+              responseStatus: 'ACCEPTED' as const,
+              respondedAt: now,
+              responseReason: notes || 'Đã xác nhận sẵn sàng tiếp nhận nhiệm vụ.',
+            };
+          }
+          return member;
+        });
+
+        const requiredMembers = team.filter((mem) => mem.isRequired !== false && mem.status !== 'Revoked');
+        const confirmedCount = requiredMembers.filter((mem) => mem.responseStatus === 'ACCEPTED').length;
+        const totalRequiredCount = Math.max(1, requiredMembers.length);
+        const allConfirmed = confirmedCount >= totalRequiredCount;
+
+        const newLog: MissionCommunicationLog = {
+          id: `log-${Date.now()}`,
+          senderId: assignmentId || `usr-${role.toLowerCase()}`,
+          senderName: userName,
+          senderRole: role.toUpperCase() === 'INSPECTOR' ? 'INSPECTOR' : 'SYSTEM',
+          type: 'CONFIRM',
+          content: `[${role.toUpperCase()}] ${userName} đã xác nhận sẵn sàng tiếp nhận nhiệm vụ.${notes ? ` Ghi chú: "${notes}"` : ''} (Tiến độ: ${confirmedCount}/${totalRequiredCount}).`,
+          timestamp: now,
+        };
+
         const updated: Mission = {
           ...m,
-          status: 'CONFIRMED',
+          team,
+          status: allConfirmed ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
+          confirmedCount,
+          totalRequiredCount,
+          confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+          allConfirmed,
           communicationLogs: [newLog, ...(m.communicationLogs || [])],
         };
         saveLocalMission(updated);
@@ -330,29 +412,145 @@ export class MissionsApi {
   }
 
   postponeMission(id: string, reason: string): Observable<Mission> {
-    const now = new Date().toISOString();
-    const newLog: MissionCommunicationLog = {
-      id: `log-${Date.now()}`,
-      senderId: 'inspector-01',
-      senderName: 'Thanh tra viên / Phi công UAV',
-      senderRole: 'INSPECTOR',
-      type: 'POSTPONE',
-      content: `Thanh tra viên đề xuất hoãn nhiệm vụ bay. Lý do: "${reason}". Đang chờ Quản lý xử lý.`,
-      timestamp: now,
-    };
+    return this.postponeAssignment(id, reason, undefined, 'INSPECTOR', 'Thanh tra viên / Phi công UAV');
+  }
 
-    return this.get(id).pipe(
+  postponeAssignment(
+    id: string,
+    reason: string,
+    assignmentId?: string,
+    role = 'INSPECTOR',
+    userName = 'Thành viên đội ngũ'
+  ): Observable<Mission> {
+    const now = new Date().toISOString();
+    const endpoint = assignmentId
+      ? `${this.url}/${id}/assignments/${assignmentId}/postpone`
+      : `${this.url}/${id}/assignments/postpone`;
+
+    const apiCall$ = this.http.post<unknown>(endpoint, { reason }).pipe(
+      catchError(() => this.http.post<unknown>(`${this.url}/${id}/postpone`, { reason }))
+    );
+
+    return apiCall$.pipe(
+      catchError(() => of(null)),
+      switchMap(() => this.get(id)),
       map((m) => {
+        const team = (m.team || []).map((member) => {
+          const isTarget = assignmentId
+            ? member.id === assignmentId
+            : member.assignmentRole.toUpperCase() === role.toUpperCase();
+          if (isTarget) {
+            return {
+              ...member,
+              responseStatus: 'POSTPONED' as const,
+              respondedAt: now,
+              responseReason: reason,
+            };
+          }
+          return member;
+        });
+
+        const newLog: MissionCommunicationLog = {
+          id: `log-${Date.now()}`,
+          senderId: assignmentId || `usr-${role.toLowerCase()}`,
+          senderName: userName,
+          senderRole: role.toUpperCase() === 'INSPECTOR' ? 'INSPECTOR' : 'SYSTEM',
+          type: 'POSTPONE',
+          content: `[${role.toUpperCase()}] ${userName} đề xuất hoãn nhiệm vụ. Lý do: "${reason}". Đang chờ Quản lý xử lý / đổi nhân sự.`,
+          timestamp: now,
+        };
+
         const updated: Mission = {
           ...m,
+          team,
           status: 'POSTPONED',
           postponeReason: reason,
+          requiresReassignment: true,
           communicationLogs: [newLog, ...(m.communicationLogs || [])],
         };
         saveLocalMission(updated);
         return updated;
       })
     );
+  }
+
+  reassignAssignment(
+    id: string,
+    assignmentId: string,
+    newUserId: string,
+    newUserName = 'Nhân sự thay thế',
+    newRole = 'INSPECTOR',
+    reason = 'Thay thế nhân sự xin hoãn'
+  ): Observable<Mission> {
+    const now = new Date().toISOString();
+    const endpoint = `${this.url}/${id}/assignments/${assignmentId}/reassign`;
+
+    return this.http
+      .post<unknown>(endpoint, { newUserId, reassignReason: reason })
+      .pipe(
+        catchError(() => of(null)),
+        switchMap(() => this.get(id)),
+        map((m) => {
+          let replacedRole = newRole;
+          const updatedTeam = (m.team || []).map((member) => {
+            if (member.id === assignmentId) {
+              replacedRole = member.assignmentRole;
+              return {
+                ...member,
+                status: 'Revoked',
+                responseStatus: 'REPLACED' as const,
+                responseReason: `Đã được thay thế bởi ${newUserName}. Lý do: ${reason}`,
+              };
+            }
+            return member;
+          });
+
+          // Add new replacement assignment
+          const newAssignment = {
+            id: `asg-${Date.now()}`,
+            missionId: id,
+            userId: newUserId,
+            userName: newUserName,
+            assignmentRole: replacedRole,
+            status: 'Active',
+            responseStatus: 'PENDING' as const,
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: null,
+            responseReason: null,
+            checkedInAt: null,
+          };
+          updatedTeam.push(newAssignment);
+
+          const requiredMembers = updatedTeam.filter((mem) => mem.isRequired !== false && mem.status !== 'Revoked');
+          const confirmedCount = requiredMembers.filter((mem) => mem.responseStatus === 'ACCEPTED').length;
+          const totalRequiredCount = Math.max(1, requiredMembers.length);
+
+          const newLog: MissionCommunicationLog = {
+            id: `log-${Date.now()}`,
+            senderId: 'manager-01',
+            senderName: 'Quản lý vận hành EVN',
+            senderRole: 'MANAGER',
+            type: 'DISPATCH',
+            content: `Quản lý đã gán nhân sự thay thế ${newUserName} cho vai trò [${replacedRole}]. Lý do: ${reason}. Hạn chót xác nhận được kích hoạt lại.`,
+            timestamp: now,
+          };
+
+          const updated: Mission = {
+            ...m,
+            team: updatedTeam,
+            status: 'PENDING_CONFIRMATION',
+            requiresReassignment: false,
+            confirmedCount,
+            totalRequiredCount,
+            confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+            allConfirmed: false,
+            communicationLogs: [newLog, ...(m.communicationLogs || [])],
+          };
+          saveLocalMission(updated);
+          return updated;
+        })
+      );
   }
 
   suspendMission(id: string, reason: string): Observable<Mission> {
@@ -509,21 +707,86 @@ export class MissionsApi {
 function createSimulatedMission(request: MissionCreateRequest): Mission {
   const id = `msn-${Date.now().toString(36).slice(2, 9)}`;
   const now = new Date().toISOString();
+  const targetAssetIds = request.targetAssetIds || [];
+
+  const rawAssignments = request.assignments || request.personnel;
+  const team: MissionAssignment[] =
+    rawAssignments && rawAssignments.length > 0
+      ? rawAssignments.map((a, idx) => ({
+          id: `asg-${id}-${idx + 1}`,
+          missionId: id,
+          userId: a.userId,
+          userName:
+            a.role === 'INSPECTOR'
+              ? 'Nguyễn Văn An (Phi công)'
+              : a.role === 'ANALYST'
+              ? 'Lê Thị Mai (Chuyên viên AI)'
+              : 'Phạm Quốc Toàn (Kỹ thuật viên)',
+          assignmentRole: a.role,
+          status: 'Active',
+          responseStatus: 'PENDING',
+          isRequired: a.isRequired !== false,
+          assignedAt: now,
+          respondedAt: null,
+          responseReason: null,
+        }))
+      : [
+          {
+            id: `asg-${id}-1`,
+            missionId: id,
+            userId: request.inspectorId || 'usr-pilot-01',
+            userName: 'Nguyễn Văn An (Phi công)',
+            assignmentRole: 'INSPECTOR',
+            status: 'Active',
+            responseStatus: 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: null,
+            responseReason: null,
+          },
+          {
+            id: `asg-${id}-2`,
+            missionId: id,
+            userId: 'usr-analyst-02',
+            userName: 'Lê Thị Mai (Chuyên viên AI)',
+            assignmentRole: 'ANALYST',
+            status: 'Active',
+            responseStatus: 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: null,
+            responseReason: null,
+          },
+          {
+            id: `asg-${id}-3`,
+            missionId: id,
+            userId: 'usr-tech-03',
+            userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+            assignmentRole: 'TECHNICIAN',
+            status: 'Active',
+            responseStatus: 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: null,
+            responseReason: null,
+          },
+        ];
+
   return {
     id,
     missionCode: `MSN-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-    title: request.name,
-    routeData: `Tuyến khảo sát ${request.targetAssetIds.length} vị trí cột`,
-    assignedToUserId: request.inspectorId,
-    assignedToUsername: 'Phi công UAV EVN',
-    droneCode: request.droneId || 'UAV-EVN-01',
+    title: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
+    routeData: `Tuyến khảo sát ${targetAssetIds.length} vị trí cột`,
+    assignedToUserId: request.inspectorId || 'usr-pilot-01',
+    assignedToUsername: 'Nguyễn Văn An (Phi công)',
+    droneCode: request.droneId || (request.droneIds && request.droneIds[0]) || 'UAV-EVN-01',
     status: 'PENDING_CONFIRMATION',
     description: request.description,
     managerId: 'manager-01',
     managerUsername: 'Quản lý vận hành EVN',
     createdAt: now,
     updatedAt: now,
-    targets: request.targetAssetIds.map((code, idx) => ({
+    targets: targetAssetIds.map((code, idx) => ({
       assetId: `ast-${idx + 1}`,
       assetCode: code,
       assetName: `Cột điện ${code}`,
@@ -534,29 +797,25 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
       latitude: 16.0544 + idx * 0.0045,
       longitude: 108.2022 + idx * 0.0065,
     })),
-    scheduledStartAt: request.scheduledAt,
+    scheduledStartAt: request.scheduledAt || request.plannedStart,
     regionId: request.regionId,
     regionName: 'Khu vực quản lý lưới điện EVN',
     missionType: request.missionType,
     triggerReason: request.triggerReason || null,
-    plannedStart: request.scheduledAt,
+    plannedStart: request.scheduledAt || request.plannedStart,
     plannedEnd: request.plannedEnd,
     actualStart: null,
     actualCompleted: null,
     boundaryWkt: request.boundaryWkt,
     confirmationDeadline: request.confirmationDeadline || null,
     managerInstructions: request.managerInstructions || null,
-    sourceAssessmentId: request.sourceAssessmentId || null,
-    team: [
-      {
-        id: `asg-${id}-1`,
-        userId: request.inspectorId,
-        userName: 'Phi công UAV EVN',
-        assignmentRole: 'Inspector / Pilot',
-        status: 'PENDING',
-        checkedInAt: null,
-      },
-    ],
+    sourceAssessmentId: request.sourceAssessmentId || request.assessmentId || null,
+    team,
+    confirmedCount: 0,
+    totalRequiredCount: team.filter((t) => t.isRequired !== false).length,
+    confirmationProgress: `0/${team.filter((t) => t.isRequired !== false).length}`,
+    allConfirmed: false,
+    pendingRoles: team.map((t) => t.assignmentRole),
     communicationLogs: [
       {
         id: `log-${Date.now()}`,
@@ -564,7 +823,7 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
         senderName: 'Quản lý vận hành EVN',
         senderRole: 'MANAGER',
         type: 'DISPATCH',
-        content: `Đã ban hành nhiệm vụ kiểm tra. Hạn chót Inspector phản hồi: ${request.confirmationDeadline ? new Date(request.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${request.managerInstructions ? ` Lời dặn: "${request.managerInstructions}"` : ''}`,
+        content: `Đã ban hành nhiệm vụ kiểm tra tới 3 vai trò (Inspector, Analyst, Technician). Hạn chót phản hồi: ${request.confirmationDeadline ? new Date(request.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${request.managerInstructions ? ` Lời dặn: "${request.managerInstructions}"` : ''}`,
         timestamp: now,
       },
     ],
@@ -625,13 +884,49 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
     team: [
       {
         id: `asg-${mId}-1`,
+        missionId: mId,
         userId: 'usr-pilot-01',
-        userName: 'Nguyễn Văn An',
-        assignmentRole: 'Inspector / Pilot',
-        status: 'PENDING',
-        checkedInAt: null,
+        userName: 'Nguyễn Văn An (Phi công)',
+        assignmentRole: 'INSPECTOR',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now,
+        respondedAt: null,
+        responseReason: null,
+      },
+      {
+        id: `asg-${mId}-2`,
+        missionId: mId,
+        userId: 'usr-analyst-02',
+        userName: 'Lê Thị Mai (Chuyên viên AI)',
+        assignmentRole: 'ANALYST',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now,
+        respondedAt: null,
+        responseReason: null,
+      },
+      {
+        id: `asg-${mId}-3`,
+        missionId: mId,
+        userId: 'usr-tech-03',
+        userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+        assignmentRole: 'TECHNICIAN',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now,
+        respondedAt: null,
+        responseReason: null,
       },
     ],
+    confirmedCount: 0,
+    totalRequiredCount: 3,
+    confirmationProgress: '0/3',
+    allConfirmed: false,
+    pendingRoles: ['INSPECTOR', 'ANALYST', 'TECHNICIAN'],
     communicationLogs: [
       {
         id: `log-${Date.now()}`,
@@ -639,7 +934,7 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
         senderName: 'Trần Đình Trọng (Quản lý)',
         senderRole: 'MANAGER',
         type: 'DISPATCH',
-        content: `Đã ban hành nhiệm vụ. Hạn chót xác nhận: ${new Date(deadline).toLocaleString('vi-VN')}. Lời dặn: Yêu cầu kiểm tra kỹ khoảng cách an toàn hành lang lưới điện.`,
+        content: `Đã ban hành nhiệm vụ tới cả 3 vai trò (Inspector, Analyst, Technician). Hạn chót xác nhận: ${new Date(deadline).toLocaleString('vi-VN')}. Lời dặn: Yêu cầu kiểm tra kỹ khoảng cách an toàn hành lang lưới điện.`,
         timestamp: now,
       },
     ],
@@ -710,13 +1005,49 @@ function createSimulatedMissionById(id: string): Mission {
     team: [
       {
         id: `asg-${id}-1`,
+        missionId: id,
         userId: 'usr-pilot-01',
-        userName: 'Nguyễn Văn An',
-        assignmentRole: 'Inspector / Pilot',
-        status: 'PENDING',
-        checkedInAt: null,
+        userName: 'Nguyễn Văn An (Phi công)',
+        assignmentRole: 'INSPECTOR',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now.toISOString(),
+        respondedAt: null,
+        responseReason: null,
+      },
+      {
+        id: `asg-${id}-2`,
+        missionId: id,
+        userId: 'usr-analyst-02',
+        userName: 'Lê Thị Mai (Chuyên viên AI)',
+        assignmentRole: 'ANALYST',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now.toISOString(),
+        respondedAt: null,
+        responseReason: null,
+      },
+      {
+        id: `asg-${id}-3`,
+        missionId: id,
+        userId: 'usr-tech-03',
+        userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+        assignmentRole: 'TECHNICIAN',
+        status: 'Active',
+        responseStatus: 'PENDING',
+        isRequired: true,
+        assignedAt: now.toISOString(),
+        respondedAt: null,
+        responseReason: null,
       },
     ],
+    confirmedCount: 0,
+    totalRequiredCount: 3,
+    confirmationProgress: '0/3',
+    allConfirmed: false,
+    pendingRoles: ['INSPECTOR', 'ANALYST', 'TECHNICIAN'],
     communicationLogs: [
       {
         id: `log-${Date.now() - 1800000}`,
@@ -724,7 +1055,7 @@ function createSimulatedMissionById(id: string): Mission {
         senderName: 'Trần Đình Trọng (Quản lý)',
         senderRole: 'MANAGER',
         type: 'DISPATCH',
-        content: `Đã ban hành nhiệm vụ. Hạn chót xác nhận: ${deadline.toLocaleString('vi-VN')}. Lời dặn: Chú ý gió giật tại khu vực đèo, kiểm tra kỹ khoảng cách pha-đất.`,
+        content: `Đã ban hành nhiệm vụ tới cả 3 vai trò (Inspector, Analyst, Technician). Hạn chót xác nhận: ${deadline.toLocaleString('vi-VN')}. Lời dặn: Chú ý gió giật tại khu vực đèo, kiểm tra kỹ khoảng cách pha-đất.`,
         timestamp: new Date(Date.now() - 1800000).toISOString(),
       },
     ],
@@ -782,6 +1113,60 @@ const normalizeMission = (value: unknown): Mission => {
       })
     : [];
 
+  const rawTeam = Array.isArray(source['team'])
+    ? source['team']
+    : Array.isArray(source['assignments'])
+    ? source['assignments']
+    : Array.isArray(source['personnel'])
+    ? source['personnel']
+    : [];
+
+  const team: MissionAssignment[] = rawTeam.map((item) => {
+    const member = record(item);
+    const roleRaw = stringValue(pick(member, 'assignmentRole', 'role'), 'INSPECTOR').toUpperCase();
+    const role = roleRaw.includes('PILOT') || roleRaw.includes('INSPECT')
+      ? 'INSPECTOR'
+      : roleRaw.includes('ANALYST')
+      ? 'ANALYST'
+      : roleRaw.includes('TECH')
+      ? 'TECHNICIAN'
+      : roleRaw;
+
+    const respRaw = stringValue(pick(member, 'responseStatus', 'status'), 'PENDING').toUpperCase();
+    const responseStatus =
+      respRaw.includes('ACCEPT') || respRaw.includes('CONFIRM')
+        ? 'ACCEPTED'
+        : respRaw.includes('POSTPONE')
+        ? 'POSTPONED'
+        : respRaw.includes('REPLACE')
+        ? 'REPLACED'
+        : 'PENDING';
+
+    return {
+      id: stringValue(member['id'], `asg-${Math.random().toString(36).slice(2, 7)}`),
+      missionId: stringValue(member['missionId']),
+      userId: stringValue(member['userId']),
+      userName: stringValue(pick(member, 'userName', 'name', 'fullName'), 'Thành viên đội bay'),
+      assignmentRole: role,
+      status: stringValue(member['status'], 'Active'),
+      responseStatus,
+      isRequired: member['isRequired'] !== undefined ? Boolean(member['isRequired']) : true,
+      assignedAt: member['assignedAt'] ? stringValue(member['assignedAt']) : undefined,
+      respondedAt: member['respondedAt'] ? stringValue(member['respondedAt']) : null,
+      responseReason: member['responseReason'] ? stringValue(member['responseReason']) : null,
+      checkedInAt: member['checkedInAt'] == null ? null : stringValue(member['checkedInAt']),
+    };
+  });
+
+  const requiredMembers = team.filter((m) => m.isRequired !== false && m.status !== 'Revoked');
+  const confirmedCount = requiredMembers.filter((m) => m.responseStatus === 'ACCEPTED').length;
+  const totalRequiredCount = Math.max(1, requiredMembers.length);
+  const allConfirmed = requiredMembers.length > 0 && confirmedCount >= requiredMembers.length;
+  const pendingRoles = requiredMembers
+    .filter((m) => m.responseStatus !== 'ACCEPTED')
+    .map((m) => m.assignmentRole);
+  const hasPostponed = requiredMembers.some((m) => m.responseStatus === 'POSTPONED');
+
   return {
     id: stringValue(source['id']),
     missionCode: stringValue(pick(source, 'missionCode', 'code'), 'MISSION'),
@@ -813,19 +1198,13 @@ const normalizeMission = (value: unknown): Mission => {
     cancellationReason: source['cancellationReason'] == null ? null : stringValue(source['cancellationReason']),
     sourceAssessmentId: source['sourceAssessmentId'] == null ? null : stringValue(source['sourceAssessmentId']),
     communicationLogs,
-    team: Array.isArray(source['team'])
-      ? source['team'].map((item) => {
-          const member = record(item);
-          return {
-            id: stringValue(member['id']),
-            userId: stringValue(member['userId']),
-            userName: stringValue(member['userName']),
-            assignmentRole: stringValue(member['assignmentRole']),
-            status: stringValue(member['status']),
-            checkedInAt: member['checkedInAt'] == null ? null : stringValue(member['checkedInAt']),
-          };
-        })
-      : [],
+    team,
+    confirmedCount,
+    totalRequiredCount,
+    confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+    allConfirmed,
+    pendingRoles,
+    requiresReassignment: hasPostponed,
     targets: normalizeTargets(pick(source, 'missionTargets', 'targets', 'targetAssets')),
   };
 };

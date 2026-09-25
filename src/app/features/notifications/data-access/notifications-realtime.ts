@@ -29,6 +29,7 @@ export type MissionLifecycleEventType =
   | 'DISPATCHED'
   | 'SUSPENDED'
   | 'POSTPONED'
+  | 'REASSIGNED'
   | 'RESUMED'
   | 'CANCELLED'
   | 'REMINDER'
@@ -39,12 +40,17 @@ export interface MissionLifecycleRealtimeEvent {
   readonly missionId: string;
   readonly type: MissionLifecycleEventType;
   readonly status?: string;
+  readonly assignmentId?: string;
   readonly confirmationDeadline?: string;
   readonly managerInstructions?: string;
   readonly mission?: Partial<Mission>;
   readonly actorId?: string;
   readonly actorName?: string;
-  readonly actorRole?: 'MANAGER' | 'INSPECTOR' | 'SYSTEM';
+  readonly actorRole?: 'MANAGER' | 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' | 'SYSTEM' | string;
+  readonly allConfirmed?: boolean;
+  readonly confirmedCount?: number;
+  readonly totalRequiredCount?: number;
+  readonly pendingRoles?: readonly string[];
   readonly reason?: string;
   readonly message?: string;
   readonly log?: MissionCommunicationLog;

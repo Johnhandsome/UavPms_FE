@@ -1,15 +1,19 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { catchError, map, Observable, of } from 'rxjs';
+import { catchError, map, Observable, of, switchMap } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { unwrapApiData } from '../../../models/api.models';
+import { UserRecord } from '../../../models/users.models';
+import { UsersApi } from '../../users/data-access/users-api';
 import {
   AssessmentCreateRequest,
   AssessmentFilterOptions,
   AssessmentPage,
+  AssessmentStatus,
   DroneTechnicalInspectionResult,
   PersonnelCandidate,
   PreMissionAssessment,
+  ReadinessCheck,
   SiteCheckItem,
   UavCandidate,
 } from '../../../models/pre-mission.models';
@@ -42,6 +46,7 @@ export function getWeatherDescription(code: number): string {
 @Injectable({ providedIn: 'root' })
 export class PreMissionApi {
   private readonly http = inject(HttpClient);
+  private readonly usersApi = inject(UsersApi);
   private readonly url = `${environment.apiBaseUrl}/pre-mission-assessments`;
 
   list(
@@ -96,62 +101,163 @@ export class PreMissionApi {
   }
 
   get(id: string): Observable<PreMissionAssessment> {
-    return this.http
-      .get<unknown>(`${this.url}/${id}`)
-      .pipe(
-        map((response) => {
-          const result = normalizeAssessment(unwrapApiData(response));
-          const local = getLocalAssessment(id);
-          const merged: PreMissionAssessment = {
-            ...result,
-            consumedMissionId: local?.consumedMissionId ?? result.consumedMissionId,
-            status: local?.consumedMissionId
-              ? 'COMPLETED'
-              : (local?.status === 'COMPLETED' || local?.status === 'CONSUMED'
-                ? 'COMPLETED'
-                : (result.status === 'CONSUMED'
+    return this.usersApi.getAll().pipe(
+      catchError(() => of([] as readonly UserRecord[])),
+      switchMap((users) => {
+        return this.http
+          .get<unknown>(`${this.url}/${id}`)
+          .pipe(
+            map((response) => {
+              const result = normalizeAssessment(unwrapApiData(response));
+              const local = getLocalAssessment(id);
+              const candidates = (users && users.length > 0)
+                ? buildCandidatesFromUsers(users, result.regionId)
+                : ((result.personnelCandidates && result.personnelCandidates.length > 0)
+                  ? result.personnelCandidates
+                  : (local?.personnelCandidates || getDefaultFallbackPersonnel(result.regionId)));
+
+              const reqInsp = local?.requiredInspectors ?? result.requiredInspectors ?? 1;
+              const reqAna = local?.requiredAnalysts ?? result.requiredAnalysts ?? 1;
+              const reqTech = local?.requiredTechnicians ?? result.requiredTechnicians ?? 1;
+
+              const evaluatedPersonnel = derivedPersonnelCheck(candidates as any, reqInsp, reqAna, reqTech);
+
+              const merged: PreMissionAssessment = {
+                ...result,
+                requiredInspectors: reqInsp,
+                requiredAnalysts: reqAna,
+                requiredTechnicians: reqTech,
+                personnelCandidates: candidates,
+                personnel: evaluatedPersonnel,
+                consumedMissionId: local?.consumedMissionId ?? result.consumedMissionId,
+                status: local?.consumedMissionId
                   ? 'COMPLETED'
-                  : (result.status === 'INCOMPLETE' ? 'NOT_READY' : result.status))),
-          };
-          saveLocalAssessment(merged);
-          return merged;
-        }),
-        catchError(() => {
-          const local = getLocalAssessment(id);
-          if (local) return of(local);
-          const sim = createSimulatedAssessmentById(id);
-          saveLocalAssessment(sim);
-          return of(sim);
-        })
-      );
+                  : (local?.status === 'COMPLETED' || local?.status === 'CONSUMED'
+                    ? 'COMPLETED'
+                    : (evaluatedPersonnel.status === 'FAIL' ? 'NOT_READY' : (result.status === 'CONSUMED' ? 'COMPLETED' : (result.status === 'INCOMPLETE' ? 'NOT_READY' : result.status)))),
+              };
+              saveLocalAssessment(merged);
+              return merged;
+            }),
+            catchError(() => {
+              const local = getLocalAssessment(id);
+              if (local) {
+                const candidates = (users && users.length > 0)
+                  ? buildCandidatesFromUsers(users, local.regionId)
+                  : local.personnelCandidates;
+                const reqInsp = local.requiredInspectors ?? 1;
+                const reqAna = local.requiredAnalysts ?? 1;
+                const reqTech = local.requiredTechnicians ?? 1;
+                const evaluatedPersonnel = derivedPersonnelCheck(candidates as any, reqInsp, reqAna, reqTech);
+                const updated = {
+                  ...local,
+                  personnelCandidates: candidates,
+                  personnel: evaluatedPersonnel,
+                  status: evaluatedPersonnel.status === 'FAIL' ? 'NOT_READY' : local.status,
+                };
+                saveLocalAssessment(updated);
+                return of(updated);
+              }
+              const candidates = (users && users.length > 0)
+                ? buildCandidatesFromUsers(users)
+                : getDefaultFallbackPersonnel();
+              const sim = createSimulatedAssessmentById(id, undefined, candidates);
+              saveLocalAssessment(sim);
+              return of(sim);
+            })
+          );
+      })
+    );
   }
 
   create(request: AssessmentCreateRequest): Observable<PreMissionAssessment> {
     const plannedStart = formatIsoDate(request.plannedStart);
     const plannedEnd = formatIsoDate(request.plannedEnd);
-    return this.http
-      .post<unknown>(this.url, {
-        regionId: request.regionId,
-        lineName: request.lineName,
-        plannedStart,
-        plannedEnd,
-        scopeAssetIds: request.scopeAssetIds,
-        assetIds: request.scopeAssetIds,
-        scopeGeometry: request.scopeGeometry,
+
+    return this.usersApi.getAll().pipe(
+      catchError(() => of([] as readonly UserRecord[])),
+      switchMap((users) => {
+        const personnelCandidates = (users && users.length > 0)
+          ? buildCandidatesFromUsers(users, request.regionId)
+          : getDefaultFallbackPersonnel(request.regionId);
+
+        return this.http
+          .post<unknown>(this.url, {
+            regionId: request.regionId,
+            lineName: request.lineName,
+            plannedStart,
+            plannedEnd,
+            scopeAssetIds: request.scopeAssetIds,
+            assetIds: request.scopeAssetIds,
+            requiredInspectors: request.requiredInspectors ?? 1,
+            requiredAnalysts: request.requiredAnalysts ?? 1,
+            requiredTechnicians: request.requiredTechnicians ?? 1,
+            scopeGeometry: {
+              ...(typeof request.scopeGeometry === 'object' ? request.scopeGeometry : {}),
+              requiredInspectors: request.requiredInspectors ?? 1,
+              requiredAnalysts: request.requiredAnalysts ?? 1,
+              requiredTechnicians: request.requiredTechnicians ?? 1,
+            },
+          })
+          .pipe(
+            map((response) => {
+              const result = normalizeAssessment(unwrapApiData(response));
+              const reqInsp = request.requiredInspectors ?? result.requiredInspectors ?? 1;
+              const reqAna = request.requiredAnalysts ?? result.requiredAnalysts ?? 1;
+              const reqTech = request.requiredTechnicians ?? result.requiredTechnicians ?? 1;
+              const candidates = (result.personnelCandidates && result.personnelCandidates.length > 0)
+                ? result.personnelCandidates
+                : personnelCandidates;
+
+              const evaluatedPersonnel = derivedPersonnelCheck(candidates as any, reqInsp, reqAna, reqTech);
+              const merged: PreMissionAssessment = {
+                ...result,
+                requiredInspectors: reqInsp,
+                requiredAnalysts: reqAna,
+                requiredTechnicians: reqTech,
+                personnelCandidates: candidates,
+                personnel: evaluatedPersonnel,
+                status: evaluatedPersonnel.status === 'FAIL' ? 'NOT_READY' : result.status,
+              };
+              saveLocalAssessment(merged);
+              return merged;
+            }),
+            catchError((err) => {
+              console.warn('Backend pre-mission-assessments POST failed, falling back to local simulation:', err);
+              const simulated = createSimulatedAssessment(request, personnelCandidates);
+              saveLocalAssessment(simulated);
+              return of(simulated);
+            })
+          );
       })
-      .pipe(
-        map((response) => {
-          const result = normalizeAssessment(unwrapApiData(response));
-          saveLocalAssessment(result);
-          return result;
-        }),
-        catchError((err) => {
-          console.warn('Backend pre-mission-assessments POST failed, falling back to local simulation:', err);
-          const simulated = createSimulatedAssessment(request);
-          saveLocalAssessment(simulated);
-          return of(simulated);
-        })
-      );
+    );
+  }
+
+  updateQuotas(
+    id: string,
+    quotas: { requiredInspectors?: number; requiredAnalysts?: number; requiredTechnicians?: number }
+  ): Observable<PreMissionAssessment> {
+    const local = getLocalAssessment(id);
+    if (!local) return of(createSimulatedAssessmentById(id));
+
+    const reqInsp = quotas.requiredInspectors ?? local.requiredInspectors ?? 1;
+    const reqAna = quotas.requiredAnalysts ?? local.requiredAnalysts ?? 1;
+    const reqTech = quotas.requiredTechnicians ?? local.requiredTechnicians ?? 1;
+
+    const evaluatedPersonnel = derivedPersonnelCheck(local.personnelCandidates as any, reqInsp, reqAna, reqTech);
+    const updated: PreMissionAssessment = {
+      ...local,
+      requiredInspectors: reqInsp,
+      requiredAnalysts: reqAna,
+      requiredTechnicians: reqTech,
+      personnel: evaluatedPersonnel,
+      status: evaluatedPersonnel.status === 'FAIL'
+        ? 'NOT_READY'
+        : (local.status === 'NOT_READY' && evaluatedPersonnel.status === 'PASS' && local.site?.status === 'PASS' && local.uav?.status === 'PASS' ? 'READY' : local.status),
+      updatedAt: new Date().toISOString(),
+    };
+    saveLocalAssessment(updated);
+    return of(updated);
   }
 
   evaluate(id: string): Observable<PreMissionAssessment> {
@@ -476,6 +582,335 @@ const normalizeInspectionResult = (
   };
 };
 
+function getBusyUserIdsFromActiveMissions(): Set<string> {
+  const busy = new Set<string>();
+  try {
+    const raw = localStorage.getItem('uav_pms_missions_data_v2') || sessionStorage.getItem('uav_pms_missions_data_v2');
+    if (raw) {
+      const map = JSON.parse(raw) as Record<string, unknown>;
+      Object.values(map).forEach((item) => {
+        const m = item as Record<string, unknown>;
+        const s = stringOf(m?.['status']).toUpperCase();
+        if (s && !['COMPLETED', 'CANCELLED', 'REJECTED'].includes(s)) {
+          if (m['inspectorId']) busy.add(String(m['inspectorId']));
+          if (m['analystId']) busy.add(String(m['analystId']));
+          if (m['technicianId']) busy.add(String(m['technicianId']));
+          if (Array.isArray(m['assignments'])) {
+            m['assignments'].forEach((as: unknown) => {
+              const a = as as Record<string, unknown>;
+              if (a?.['userId'] && !['REJECTED', 'CANCELLED'].includes(stringOf(a?.['status']))) {
+                busy.add(String(a['userId']));
+              }
+            });
+          }
+        }
+      });
+    }
+  } catch {
+    // Ignore storage parse error
+  }
+  return busy;
+}
+
+function buildCandidatesFromUsers(
+  users: readonly UserRecord[],
+  regionId?: string
+): PersonnelCandidate[] {
+  const busyUserIds = getBusyUserIdsFromActiveMissions();
+
+  return users.map((u) => {
+    const roleRaw = (u.role || '').toUpperCase();
+    let role: 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' = 'INSPECTOR';
+    let qual = 'Chứng chỉ phi công UAV loại 1 (EVN-CERT), >120h bay kiểm tra đường dây';
+    if (roleRaw.includes('ANALYST') || roleRaw.includes('PHÂN TÍCH')) {
+      role = 'ANALYST';
+      qual = 'Chứng chỉ thẩm định khuyết tật lưới điện AI & xử lý ảnh quang học cấp 2';
+    } else if (roleRaw.includes('TECH') || roleRaw.includes('KỸ THUẬT') || roleRaw.includes('BẢO TRÌ')) {
+      role = 'TECHNICIAN';
+      qual = 'Kỹ sư cơ điện tử, chứng chỉ kiểm định an toàn kỹ thuật UAV & trạm pin';
+    } else {
+      role = 'INSPECTOR';
+      qual = 'Chứng chỉ phi công UAV loại 1 (EVN-CERT), >120h bay kiểm tra đường dây';
+    }
+
+    const isActive = u.status === 'Active';
+    const isBusy = busyUserIds.has(u.id);
+    const isAvailable = isActive && !isBusy;
+    const isEligible = isActive;
+
+    return {
+      id: u.id,
+      name: u.fullName || u.username || u.email,
+      role,
+      region: regionId ? `Đơn vị (${regionId})` : 'Khu vực quản lý',
+      regionId,
+      availability: isAvailable ? 'AVAILABLE' : 'BUSY',
+      eligibility: isEligible ? 'ELIGIBLE' : 'INELIGIBLE',
+      isActive,
+      isEligible,
+      isWithinScope: true,
+      isAvailable,
+      overallEligibility: isAvailable ? 'ELIGIBLE' : (isBusy ? 'BUSY' : 'INELIGIBLE'),
+      qualificationDetails: qual,
+      conflict: isBusy ? 'Đang thực hiện nhiệm vụ bay khác' : null,
+      reason: isAvailable
+        ? 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành bay (Đang rảnh)'
+        : (isBusy ? 'Trùng lịch công tác / nhiệm vụ bay' : 'Tài khoản không hoạt động'),
+    };
+  });
+}
+
+function getDefaultFallbackPersonnel(regionId?: string): PersonnelCandidate[] {
+  const reg = regionId ? `Đơn vị (${regionId})` : 'Khu vực quản lý';
+  return [
+    // Inspectors
+    {
+      id: 'usr-1',
+      name: 'Nguyễn Văn An',
+      role: 'INSPECTOR',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chứng chỉ phi công UAV loại 1 (EVN-CERT), 150h bay kiểm tra đường dây 220/500kV',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành bay (Đang rảnh)',
+    },
+    {
+      id: 'usr-2',
+      name: 'Trần Minh Tuấn',
+      role: 'INSPECTOR',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chứng chỉ phi công UAV loại 1, chuyên gia bay tầm gần kiểm tra phụ kiện cách điện',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành bay (Đang rảnh)',
+    },
+    {
+      id: 'usr-3',
+      name: 'Hoàng Đức Trọng',
+      role: 'INSPECTOR',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Phi công UAV cấp cao, chứng chỉ điều khiển bay vượt địa hình hiểm trở',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành bay (Đang rảnh)',
+    },
+    {
+      id: 'usr-4',
+      name: 'Đỗ Hữu Nghĩa',
+      role: 'INSPECTOR',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chứng chỉ phi công UAV thương mại EVN, kinh nghiệm 90h bay trinh sát sự cố',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành bay (Đang rảnh)',
+    },
+    {
+      id: 'usr-5',
+      name: 'Đặng Quang Huy',
+      role: 'INSPECTOR',
+      region: reg,
+      availability: 'BUSY',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: false,
+      overallEligibility: 'BUSY',
+      qualificationDetails: 'Phi công UAV đường dây 500kV',
+      conflict: 'Đang thực hiện bay kiểm tra sự cố tuyến ĐZ 500kV Nho Quan - Thường Tín',
+      reason: 'Trùng lịch công tác / nhiệm vụ bay đang diễn ra',
+    },
+
+    // Analysts
+    {
+      id: 'usr-6',
+      name: 'Lê Thị Mai',
+      role: 'ANALYST',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chứng chỉ thẩm định khuyết tật lưới điện AI & xử lý ảnh quang học cấp 2',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng phân tích dữ liệu (Đang rảnh)',
+    },
+    {
+      id: 'usr-7',
+      name: 'Vũ Hồng Nhung',
+      role: 'ANALYST',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chuyên viên xử lý dữ liệu viễn thám LiDAR & phân tích phát nhiệt mối nối',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng phân tích dữ liệu (Đang rảnh)',
+    },
+    {
+      id: 'usr-8',
+      name: 'Bùi Gia Huy',
+      role: 'ANALYST',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Kỹ sư phân tích dữ liệu thị giác máy tính & kiểm định khuyết tật chuỗi sứ',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng phân tích dữ liệu (Đang rảnh)',
+    },
+    {
+      id: 'usr-9',
+      name: 'Nguyễn Thanh Tùng',
+      role: 'ANALYST',
+      region: reg,
+      availability: 'BUSY',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: false,
+      overallEligibility: 'BUSY',
+      qualificationDetails: 'Chuyên viên AI chẩn đoán ảnh nhiệt',
+      conflict: 'Đang tham gia hội đồng giám định khuyết tật ảnh nhiệt trạm biến áp',
+      reason: 'Đang bận công tác giám định chuyên đề',
+    },
+
+    // Technicians
+    {
+      id: 'usr-10',
+      name: 'Phạm Quốc Toàn',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Kỹ sư cơ điện tử, chứng chỉ kiểm định an toàn kỹ thuật UAV & trạm pin thông minh',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng kỹ thuật thiết bị (Đang rảnh)',
+    },
+    {
+      id: 'usr-11',
+      name: 'Ngô Đức Duy',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Chứng chỉ bảo dưỡng phần cứng bay ArduPilot, kỹ thuật cân chỉnh gimbal & payload cảm biến',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng kỹ thuật thiết bị (Đang rảnh)',
+    },
+    {
+      id: 'usr-12',
+      name: 'Trịnh Văn Lâm',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Kỹ thuật viên điện - điện tử, chuyên trách trạm sạc dã chiến & kiểm tra xung lực cánh quạt',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng kỹ thuật thiết bị (Đang rảnh)',
+    },
+    {
+      id: 'usr-13',
+      name: 'Lương Minh Khoa',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Kỹ sư bảo trì thiết bị điện tử viễn thông, kiểm định liên lạc RC/Telemetry 4G',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng kỹ thuật thiết bị (Đang rảnh)',
+    },
+    {
+      id: 'usr-14',
+      name: 'Lê Bá Thành',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'AVAILABLE',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: true,
+      overallEligibility: 'ELIGIBLE',
+      qualificationDetails: 'Kỹ thuật viên an toàn UAV EVN, chuyên trách hệ thống phanh dù khẩn cấp & cảm biến tránh va',
+      conflict: null,
+      reason: 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng kỹ thuật thiết bị (Đang rảnh)',
+    },
+    {
+      id: 'usr-15',
+      name: 'Phan Hải Long',
+      role: 'TECHNICIAN',
+      region: reg,
+      availability: 'BUSY',
+      eligibility: 'ELIGIBLE',
+      isActive: true,
+      isEligible: true,
+      isWithinScope: true,
+      isAvailable: false,
+      overallEligibility: 'BUSY',
+      qualificationDetails: 'Kỹ sư trưởng bảo dưỡng đội bay UAV',
+      conflict: 'Đang bảo dưỡng định kỳ trạm sạc nhanh tại Tổ truyền tải điện Hà Đông',
+      reason: 'Trùng lịch bảo dưỡng thiết bị cấp xưởng',
+    },
+  ];
+}
+
 const normalizeAssessment = (value: unknown): PreMissionAssessment => {
   const x = objectOf(value);
   const assets = arrayOf(x['assets']);
@@ -497,12 +932,28 @@ const normalizeAssessment = (value: unknown): PreMissionAssessment => {
   const scopeGeometry = objectOf(x['scopeGeometry']);
   const bufferMeters = Number(scopeGeometry['corridorBufferMeters'] ?? 50);
   const maxAltitude = Number(scopeGeometry['maxFlightAltitudeMeters'] ?? 120);
+  const reqInspectors = Number(x['requiredInspectors'] ?? scopeGeometry['requiredInspectors'] ?? 1);
+  const reqAnalysts = Number(x['requiredAnalysts'] ?? scopeGeometry['requiredAnalysts'] ?? 1);
+  const reqTechnicians = Number(x['requiredTechnicians'] ?? scopeGeometry['requiredTechnicians'] ?? 1);
 
   const siteChecks = rawSiteChecks.length
     ? (rawSiteChecks.map(objectOf) as unknown as readonly SiteCheckItem[])
     : defaultSiteChecks(isFeasible, bufferMeters, maxAltitude);
 
   const rawInspection = x['droneInspection'] ? normalizeInspectionResult(x['droneInspection'], 'UAV-DEFAULT') : null;
+
+  const rawPersonnelCandidates = arrayOf(x['personnelCandidates']).map((c) => normalizeCandidate(objectOf(c)));
+  const personnelCheck = x['personnel']
+    ? checkOf(x['personnel'])
+    : derivedPersonnelCheck(rawPersonnelCandidates, reqInspectors, reqAnalysts, reqTechnicians);
+
+  const siteCheck = x['site'] ? checkOf(x['site']) : derivedCheck(status !== 'UNKNOWN');
+  const uavCheck = x['uav'] ? checkOf(x['uav']) : derivedCheck(arrayOf(x['uavCandidates']).length > 0);
+  const technicalCheck = x['technical'] ? checkOf(x['technical']) : derivedCheck(status === 'READY');
+
+  const computedStatus = (personnelCheck.status === 'FAIL' || siteCheck.status === 'FAIL' || uavCheck.status === 'FAIL')
+    ? (status === 'READY' ? 'NOT_READY' : status)
+    : status;
 
   return {
     id: stringOf(x['id']),
@@ -514,16 +965,19 @@ const normalizeAssessment = (value: unknown): PreMissionAssessment => {
     assetCount: Number(x['assetCount'] ?? scopeAssetIds.length),
     plannedStart: stringOf(x['plannedStart']),
     plannedEnd: stringOf(x['plannedEnd']),
-    site: x['site'] ? checkOf(x['site']) : derivedCheck(status !== 'UNKNOWN'),
-    personnel: x['personnel'] ? checkOf(x['personnel']) : derivedCheck(arrayOf(x['personnelCandidates']).length > 0),
-    uav: x['uav'] ? checkOf(x['uav']) : derivedCheck(arrayOf(x['uavCandidates']).length > 0),
-    technical: x['technical'] ? checkOf(x['technical']) : derivedCheck(status === 'READY'),
-    status,
+    requiredInspectors: reqInspectors,
+    requiredAnalysts: reqAnalysts,
+    requiredTechnicians: reqTechnicians,
+    site: siteCheck,
+    personnel: personnelCheck,
+    uav: uavCheck,
+    technical: technicalCheck,
+    status: computedStatus,
     validUntil: x['validUntil'] == null ? null : stringOf(x['validUntil']),
     createdBy: x['createdBy'] == null ? null : stringOf(x['createdBy']),
     updatedAt: x['updatedAt'] == null ? null : stringOf(x['updatedAt']),
     consumedMissionId: x['consumedMissionId'] == null ? null : stringOf(x['consumedMissionId']),
-    personnelCandidates: arrayOf(x['personnelCandidates']).map(objectOf) as never,
+    personnelCandidates: rawPersonnelCandidates as never,
     uavCandidates: arrayOf(x['uavCandidates']).map(objectOf) as never,
     technicalMetrics: arrayOf(x['technicalMetrics']).length
       ? (arrayOf(x['technicalMetrics']).map(objectOf) as never)
@@ -534,6 +988,102 @@ const normalizeAssessment = (value: unknown): PreMissionAssessment => {
     scopeGeometry: x['scopeGeometry'],
   };
 };
+
+function normalizeCandidate(c: Record<string, unknown>): Record<string, unknown> {
+  const roleRaw = stringOf(c['role'] || 'INSPECTOR').toUpperCase();
+  const role = roleRaw.includes('PILOT') || roleRaw.includes('INSPECT')
+    ? 'INSPECTOR'
+    : roleRaw.includes('ANALYST')
+    ? 'ANALYST'
+    : roleRaw.includes('TECH')
+    ? 'TECHNICIAN'
+    : roleRaw;
+
+  return {
+    ...c,
+    id: stringOf(c['id']),
+    name: stringOf(c['name'] || c['fullName']),
+    role,
+    region: stringOf(c['region'] || c['regionName']),
+    availability: stringOf(c['availability'] || 'AVAILABLE'),
+    eligibility: stringOf(c['eligibility'] || c['overallEligibility'] || 'ELIGIBLE'),
+    isActive: c['isActive'] !== undefined ? Boolean(c['isActive']) : true,
+    isEligible: c['isEligible'] !== undefined ? Boolean(c['isEligible']) : true,
+    isWithinScope: c['isWithinScope'] !== undefined ? Boolean(c['isWithinScope']) : true,
+    isAvailable: c['isAvailable'] !== undefined ? Boolean(c['isAvailable']) : true,
+    overallEligibility: stringOf(c['overallEligibility'] || c['eligibility'] || 'ELIGIBLE'),
+    qualificationDetails: stringOf(c['qualificationDetails'] || c['reason'] || 'Đủ chứng chỉ chuyên môn EVN'),
+    conflict: c['conflict'] == null ? null : stringOf(c['conflict']),
+    reason: stringOf(c['reason'] || 'Đủ 5 tiêu chuẩn sẵn sàng vận hành'),
+  };
+}
+
+export function derivedPersonnelCheck(
+  candidates: readonly Record<string, unknown>[],
+  reqInspectors = 1,
+  reqAnalysts = 1,
+  reqTechnicians = 1
+): ReadinessCheck {
+  if (!candidates || candidates.length === 0) {
+    return { status: 'FAIL', reason: 'Chưa có ứng viên nhân sự nào trong hệ thống.', evaluatedAt: new Date().toISOString() };
+  }
+
+  // Filter ONLY available ("đang rảnh") candidates satisfying 5 AND criteria:
+  // Active, Scope, Eligible, and Available (no conflict & availability === 'AVAILABLE')
+  const availableCandidates = candidates.filter((c) => {
+    const activeOk = c['isActive'] !== false;
+    const scopeOk = c['isWithinScope'] !== false;
+    const eligOk = c['isEligible'] !== false && stringOf(c['eligibility'] || c['overallEligibility']).toUpperCase() === 'ELIGIBLE';
+    const availOk = c['isAvailable'] !== false && stringOf(c['availability']).toUpperCase() === 'AVAILABLE' && !c['conflict'];
+    return activeOk && scopeOk && eligOk && availOk;
+  });
+
+  const availableInspectors = availableCandidates.filter((c) => {
+    const r = stringOf(c['role']).toUpperCase();
+    return r.includes('INSPECT') || r.includes('PILOT');
+  });
+
+  const availableAnalysts = availableCandidates.filter((c) => {
+    const r = stringOf(c['role']).toUpperCase();
+    return r.includes('ANALYST');
+  });
+
+  const availableTechnicians = availableCandidates.filter((c) => {
+    const r = stringOf(c['role']).toUpperCase();
+    return r.includes('TECH') || r.includes('MAINTENANCE');
+  });
+
+  const missingList: string[] = [];
+  if (availableInspectors.length < reqInspectors) {
+    missingList.push(
+      `Thiếu ${reqInspectors - availableInspectors.length} Inspector (khả dụng ${availableInspectors.length}/${reqInspectors})`
+    );
+  }
+  if (availableAnalysts.length < reqAnalysts) {
+    missingList.push(
+      `Thiếu ${reqAnalysts - availableAnalysts.length} Analyst (khả dụng ${availableAnalysts.length}/${reqAnalysts})`
+    );
+  }
+  if (availableTechnicians.length < reqTechnicians) {
+    missingList.push(
+      `Thiếu ${reqTechnicians - availableTechnicians.length} Technician (khả dụng ${availableTechnicians.length}/${reqTechnicians})`
+    );
+  }
+
+  if (missingList.length === 0) {
+    return {
+      status: 'PASS',
+      reason: `Đạt đủ định mức nhân sự đang rảnh (${availableInspectors.length} Inspector, ${availableAnalysts.length} Analyst, ${availableTechnicians.length} Technician).`,
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    status: 'FAIL',
+    reason: `Không đạt định mức nhân sự: ${missingList.join('; ')}. Hệ thống chỉ tính nhân sự đang rảnh trong CSDL.`,
+    evaluatedAt: new Date().toISOString(),
+  };
+}
 
 const normalizePage = (
   value: unknown,
@@ -599,11 +1149,26 @@ function formatIsoDate(val?: string): string {
   }
 }
 
-function createSimulatedAssessment(request: AssessmentCreateRequest): PreMissionAssessment {
+function createSimulatedAssessment(
+  request: AssessmentCreateRequest,
+  realCandidates?: readonly PersonnelCandidate[]
+): PreMissionAssessment {
   const id = `asm-${Date.now().toString(36)}`;
   const codeNum = Math.floor(1000 + Math.random() * 9000);
   const plannedStart = formatIsoDate(request.plannedStart) || new Date(Date.now() + 3600000).toISOString();
   const plannedEnd = formatIsoDate(request.plannedEnd) || new Date(Date.now() + 14400000).toISOString();
+
+  const candidates = (realCandidates && realCandidates.length > 0)
+    ? realCandidates
+    : getDefaultFallbackPersonnel(request.regionId);
+
+  const reqInsp = request.requiredInspectors ?? 1;
+  const reqAna = request.requiredAnalysts ?? 1;
+  const reqTech = request.requiredTechnicians ?? 1;
+
+  const personnelCheck = derivedPersonnelCheck(candidates as any, reqInsp, reqAna, reqTech);
+  const status: AssessmentStatus = personnelCheck.status === 'FAIL' ? 'NOT_READY' : 'READY';
+
   return {
     id,
     assessmentCode: `PMA-2026-${codeNum}`,
@@ -614,37 +1179,19 @@ function createSimulatedAssessment(request: AssessmentCreateRequest): PreMission
     assetCount: request.scopeAssetIds.length,
     plannedStart,
     plannedEnd,
+    requiredInspectors: reqInsp,
+    requiredAnalysts: reqAna,
+    requiredTechnicians: reqTech,
     site: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
-    personnel: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
+    personnel: personnelCheck,
     uav: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
     technical: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
-    status: 'READY',
+    status,
     validUntil: new Date(Date.now() + 86400000 * 2).toISOString(),
     createdBy: 'Kỹ sư quản lý bay',
     updatedAt: new Date().toISOString(),
     consumedMissionId: null,
-    personnelCandidates: [
-      {
-        id: 'usr-1',
-        name: 'Nguyễn Văn An',
-        role: 'Pilot',
-        region: request.regionId ? `Đơn vị (${request.regionId})` : 'Khu vực quản lý',
-        availability: 'AVAILABLE',
-        eligibility: 'ELIGIBLE',
-        conflict: null,
-        reason: 'Chứng chỉ phi công UAV loại 1 (EVN-CERT) còn hạn, tích lũy 120h bay kiểm tra đường dây',
-      },
-      {
-        id: 'usr-2',
-        name: 'Trần Thị Bình',
-        role: 'Observer',
-        region: request.regionId ? `Đơn vị (${request.regionId})` : 'Khu vực quản lý',
-        availability: 'AVAILABLE',
-        eligibility: 'ELIGIBLE',
-        conflict: null,
-        reason: 'Đã hoàn thành khóa huấn luyện giám sát an toàn hành lang 220kV/500kV',
-      },
-    ],
+    personnelCandidates: candidates,
     uavCandidates: [
       {
         id: 'uav-1',
@@ -679,7 +1226,23 @@ function createSimulatedAssessment(request: AssessmentCreateRequest): PreMission
   };
 }
 
-function createSimulatedAssessmentById(id: string, status = 'READY'): PreMissionAssessment {
+function createSimulatedAssessmentById(
+  id: string,
+  targetStatus?: string,
+  realCandidates?: readonly PersonnelCandidate[],
+  reqInsp = 1,
+  reqAna = 1,
+  reqTech = 1
+): PreMissionAssessment {
+  const candidates = (realCandidates && realCandidates.length > 0)
+    ? realCandidates
+    : getDefaultFallbackPersonnel();
+
+  const personnelCheck = derivedPersonnelCheck(candidates as any, reqInsp, reqAna, reqTech);
+  const status: AssessmentStatus = targetStatus
+    ? (targetStatus === 'READY' && personnelCheck.status === 'FAIL' ? 'NOT_READY' : targetStatus)
+    : (personnelCheck.status === 'FAIL' ? 'NOT_READY' : 'READY');
+
   return {
     id,
     assessmentCode: `PMA-${id.slice(0, 8).toUpperCase()}`,
@@ -688,8 +1251,11 @@ function createSimulatedAssessmentById(id: string, status = 'READY'): PreMission
     assetCount: 3,
     plannedStart: new Date(Date.now() + 3600000).toISOString(),
     plannedEnd: new Date(Date.now() + 14400000).toISOString(),
+    requiredInspectors: reqInsp,
+    requiredAnalysts: reqAna,
+    requiredTechnicians: reqTech,
     site: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
-    personnel: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
+    personnel: personnelCheck,
     uav: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
     technical: { status: 'PASS', reason: null, evaluatedAt: new Date().toISOString() },
     status,
@@ -697,28 +1263,7 @@ function createSimulatedAssessmentById(id: string, status = 'READY'): PreMission
     createdBy: 'Kỹ sư quản lý bay',
     updatedAt: new Date().toISOString(),
     consumedMissionId: null,
-    personnelCandidates: [
-      {
-        id: 'usr-1',
-        name: 'Nguyễn Văn An',
-        role: 'Pilot',
-        region: 'Đơn vị miền Nam',
-        availability: 'AVAILABLE',
-        eligibility: 'ELIGIBLE',
-        conflict: null,
-        reason: 'Chứng chỉ phi công UAV loại 1 (EVN-CERT) còn hạn, tích lũy 120h bay kiểm tra đường dây',
-      },
-      {
-        id: 'usr-2',
-        name: 'Trần Thị Bình',
-        role: 'Observer',
-        region: 'Đơn vị miền Nam',
-        availability: 'AVAILABLE',
-        eligibility: 'ELIGIBLE',
-        conflict: null,
-        reason: 'Đã hoàn thành khóa huấn luyện giám sát an toàn hành lang 220kV/500kV',
-      },
-    ],
+    personnelCandidates: candidates,
     uavCandidates: [
       {
         id: 'uav-1',

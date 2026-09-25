@@ -23,6 +23,37 @@ export interface MissionCommunicationLog {
   readonly metadata?: Record<string, unknown>;
 }
 
+export type MissionOperationalRole = 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' | string;
+
+export type AssignmentResponseStatus = 'PENDING' | 'ACCEPTED' | 'POSTPONED' | 'REPLACED' | 'CANCELLED' | string;
+
+export interface MissionMemberAssignmentItem {
+  readonly userId: string;
+  readonly role: MissionOperationalRole;
+  readonly isRequired?: boolean;
+}
+
+export interface ReassignAssignmentRequest {
+  readonly newUserId: string;
+  readonly reassignReason?: string;
+}
+
+export interface MissionAssignment {
+  readonly id: string;
+  readonly missionId?: string;
+  readonly userId: string;
+  readonly userName: string;
+  readonly userFullName?: string;
+  readonly assignmentRole: MissionOperationalRole;
+  readonly status: string; // 'Active' | 'Unavailable' | 'Revoked' | string
+  readonly responseStatus?: AssignmentResponseStatus;
+  readonly isRequired?: boolean;
+  readonly assignedAt?: string;
+  readonly respondedAt?: string | null;
+  readonly responseReason?: string | null;
+  readonly checkedInAt?: string | null;
+}
+
 export interface Mission {
   readonly id: string;
   readonly missionCode: string;
@@ -57,6 +88,14 @@ export interface Mission {
   readonly sourceAssessmentId?: string | null;
   readonly priority?: 'Urgent' | 'High' | 'Medium' | 'Normal' | 'Low' | string;
   readonly communicationLogs?: readonly MissionCommunicationLog[];
+  // Multi-role confirmation progress properties
+  readonly confirmedAt?: string | null;
+  readonly confirmedCount?: number;
+  readonly totalRequiredCount?: number;
+  readonly confirmationProgress?: number | string;
+  readonly allConfirmed?: boolean;
+  readonly pendingRoles?: readonly string[];
+  readonly requiresReassignment?: boolean;
 }
 
 export interface MissionPage {
@@ -77,32 +116,30 @@ export interface MissionMutationRequest {
 }
 
 export interface MissionCreateRequest {
-  readonly name: string;
+  readonly name?: string;
+  readonly title?: string;
   readonly description: string;
-  readonly scheduledAt: string;
+  readonly scheduledAt?: string;
+  readonly plannedStart?: string;
   readonly plannedEnd: string;
-  readonly regionId: string;
-  readonly missionType: 'AD_HOC' | 'SCHEDULED';
+  readonly regionId?: string;
+  readonly missionType?: 'AD_HOC' | 'SCHEDULED' | string;
   readonly triggerReason?: string;
   readonly scheduleId?: string;
-  readonly inspectorId: string;
-  readonly droneId: string;
-  readonly targetAssetIds: readonly string[];
-  readonly boundaryWkt: string;
+  readonly inspectorId?: string;
+  readonly droneId?: string;
+  readonly droneIds?: readonly string[];
+  readonly targetAssetIds?: readonly string[];
+  readonly boundaryWkt?: string;
   readonly routeData?: string;
   readonly confirmationDeadline?: string;
   readonly managerInstructions?: string;
   readonly sourceAssessmentId?: string;
+  readonly assessmentId?: string;
   readonly priority?: string;
-}
-
-export interface MissionAssignment {
-  readonly id: string;
-  readonly userId: string;
-  readonly userName: string;
-  readonly assignmentRole: string;
-  readonly status: string;
-  readonly checkedInAt?: string | null;
+  readonly assignments?: readonly MissionMemberAssignmentItem[];
+  readonly personnel?: readonly MissionMemberAssignmentItem[];
+  readonly idempotencyKey?: string;
 }
 
 export interface MissionTarget {

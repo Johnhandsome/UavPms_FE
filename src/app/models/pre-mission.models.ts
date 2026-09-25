@@ -22,14 +22,25 @@ export interface SiteCheckItem {
   readonly severity?: 'low' | 'medium' | 'high';
 }
 
+export type OperationalRole = 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' | string;
+
 export interface PersonnelCandidate {
   readonly id: string;
   readonly name: string;
-  readonly role: string;
+  readonly role: OperationalRole;
   readonly region?: string;
+  readonly regionId?: string;
+  readonly regionName?: string;
   readonly availability: string;
   readonly eligibility: string;
+  readonly isActive?: boolean;
+  readonly isEligible?: boolean;
+  readonly isWithinScope?: boolean;
+  readonly isAvailable?: boolean;
+  readonly overallEligibility?: boolean | 'ELIGIBLE' | 'INELIGIBLE' | string;
+  readonly qualificationDetails?: string;
   readonly conflict?: string | null;
+  readonly reasonCode?: string | null;
   readonly reason?: string | null;
 }
 
@@ -103,6 +114,9 @@ export interface PreMissionAssessment {
   readonly droneInspection?: DroneTechnicalInspectionResult | null;
   readonly scopeAssetIds: readonly string[];
   readonly scopeGeometry?: unknown;
+  readonly requiredInspectors?: number;
+  readonly requiredAnalysts?: number;
+  readonly requiredTechnicians?: number;
 }
 
 export interface AssessmentPage {
@@ -130,4 +144,7 @@ export interface AssessmentCreateRequest {
   readonly plannedStart: string;
   readonly plannedEnd: string;
   readonly scopeGeometry?: unknown;
+  readonly requiredInspectors?: number;
+  readonly requiredAnalysts?: number;
+  readonly requiredTechnicians?: number;
 }
