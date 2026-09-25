@@ -210,7 +210,11 @@ export class MissionDetail {
   });
 
   protected readonly confirmationProgressPct = computed<number>(() => {
-    return Math.round(Number(this.mission()?.confirmationProgress ?? 0) * 100);
+    const m = this.mission();
+    if (!m) return 0;
+    const total = m.totalRequiredCount || 3;
+    const count = m.confirmedCount || 0;
+    return Math.round((count / Math.max(1, total)) * 100);
   });
 
   protected readonly postponedMember = computed<MissionAssignment | null>(() => {
@@ -284,13 +288,11 @@ export class MissionDetail {
   }
 
   protected canAcceptMemberAssignment(member: MissionAssignment): boolean {
-    // In Manager view or acting in Manager role, Manager CANNOT accept assignments for assigned roles
-    if (this.activeRole() === 'MANAGER') return false;
-
     const user = this.auth.user();
     if (!user) return false;
     const userRole = (user.role || '').toLowerCase();
-    if (userRole === 'manager' || userRole === 'supervisor') return false;
+    // Managers or Administrators cannot accept assignments on behalf of assigned roles
+    if (['manager', 'supervisor', 'admin', 'systemadmin', 'administrator'].includes(userRole)) return false;
 
     // Match by direct userId or username
     if (member.userId && (user.id === member.userId || user.email === member.userId || (user as any).username === member.userId)) {
@@ -1767,16 +1769,60 @@ export class MissionDetail {
           if (!overview) return;
           this.mission.update((curr) => {
             if (!curr) return null;
+            const updatedTeam = overview.assignments && overview.assignments.length > 0 ? [...overview.assignments] : (curr.team ? [...curr.team] : []);
+
+            // Guarantee 3 mandatory roles exist in updatedTeam
+            if (!updatedTeam.some((t) => t.assignmentRole === 'INSPECTOR')) {
+              updatedTeam.push({
+                id: `asg-${curr.id}-insp`,
+                missionId: curr.id,
+                userId: curr.assignedToUserId || 'inspector',
+                userName: curr.assignedToUsername || 'Phi công UAV EVN',
+                assignmentRole: 'INSPECTOR',
+                status: 'Active',
+                responseStatus: 'PENDING',
+                isRequired: true,
+              });
+            }
+            if (!updatedTeam.some((t) => t.assignmentRole === 'ANALYST')) {
+              updatedTeam.push({
+                id: `asg-${curr.id}-analyst`,
+                missionId: curr.id,
+                userId: 'analyst',
+                userName: 'Chuyên viên phân tích AI',
+                assignmentRole: 'ANALYST',
+                status: 'Active',
+                responseStatus: 'PENDING',
+                isRequired: true,
+              });
+            }
+            if (!updatedTeam.some((t) => t.assignmentRole === 'TECHNICIAN')) {
+              updatedTeam.push({
+                id: `asg-${curr.id}-tech`,
+                missionId: curr.id,
+                userId: 'technician',
+                userName: 'Kỹ thuật viên bảo trì lưới',
+                assignmentRole: 'TECHNICIAN',
+                status: 'Active',
+                responseStatus: 'PENDING',
+                isRequired: true,
+              });
+            }
+
+            const required = updatedTeam.filter((m) => m.isRequired !== false && m.status !== 'Revoked');
+            const confirmedCount = required.filter((m) => m.responseStatus === 'ACCEPTED').length;
+            const totalRequiredCount = Math.max(3, required.length);
+            const allConfirmed = required.length >= 3 && confirmedCount >= totalRequiredCount && required.every((m) => m.responseStatus === 'ACCEPTED');
+
             return {
               ...curr,
-              totalRequiredCount: overview.totalRequiredCount,
-              confirmedCount: overview.confirmedCount,
-              allConfirmed: overview.allConfirmed,
-              confirmationProgress:
-                overview.totalRequiredCount > 0 ? overview.confirmedCount / overview.totalRequiredCount : 0,
+              totalRequiredCount,
+              confirmedCount,
+              allConfirmed,
+              confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
               confirmationDeadline: overview.confirmationDeadline || curr.confirmationDeadline,
-              status: overview.allConfirmed ? 'CONFIRMED' : curr.status,
-              team: overview.assignments && overview.assignments.length > 0 ? overview.assignments : curr.team,
+              status: allConfirmed ? 'CONFIRMED' : (curr.status === 'CONFIRMED' && !allConfirmed ? 'PENDING_CONFIRMATION' : curr.status),
+              team: updatedTeam,
             };
           });
         },

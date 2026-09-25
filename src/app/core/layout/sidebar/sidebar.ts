@@ -78,6 +78,7 @@ export class Sidebar {
     if (currentRole === 'analyst') {
       return [
         { path: '/dashboard', icon: 'dashboard', label: 'Trang chủ' },
+        { path: '/missions', icon: 'appstore', label: 'Nhiệm vụ bay' },
         { path: '/gis', icon: 'environment', label: 'Bản đồ GIS' },
         { path: '/ai-review', icon: 'audit', label: 'Duyệt sự cố AI' },
         { path: '/ai-analysis/upload', icon: 'experiment', label: 'Phân tích AI' },
@@ -91,6 +92,7 @@ export class Sidebar {
     if (currentRole === 'technician' || currentRole === 'maintenancetechnician') {
       return [
         { path: '/dashboard', icon: 'dashboard', label: 'Trang chủ' },
+        { path: '/missions', icon: 'appstore', label: 'Nhiệm vụ bay' },
         { path: '/gis', icon: 'environment', label: 'Bản đồ GIS' },
         { path: '/assets', icon: 'safety-certificate', label: 'Thiết bị lưới điện' },
         { path: '/inspections', icon: 'file-text', label: 'Công việc & Sự cố' },

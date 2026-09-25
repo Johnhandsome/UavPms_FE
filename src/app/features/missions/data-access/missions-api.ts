@@ -101,10 +101,82 @@ export function saveLocalMission(mission: Mission): void {
 
 function mergeWithLocalMission(m: Mission): Mission {
   const local = getLocalMission(m.id);
-  if (!local) return m;
+  const baseTeam = m.team && m.team.length > 0 ? [...m.team] : local?.team ? [...local.team] : [];
+
+  // Guarantee all 3 mandatory roles exist
+  if (!baseTeam.some((t) => t.assignmentRole === 'INSPECTOR')) {
+    baseTeam.push({
+      id: `asg-${m.id}-insp`,
+      missionId: m.id,
+      userId: m.assignedToUserId || 'inspector',
+      userName: m.assignedToUsername || 'Phi công UAV EVN',
+      assignmentRole: 'INSPECTOR',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+    });
+  }
+  if (!baseTeam.some((t) => t.assignmentRole === 'ANALYST')) {
+    baseTeam.push({
+      id: `asg-${m.id}-analyst`,
+      missionId: m.id,
+      userId: 'analyst',
+      userName: 'Chuyên viên phân tích AI',
+      assignmentRole: 'ANALYST',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+    });
+  }
+  if (!baseTeam.some((t) => t.assignmentRole === 'TECHNICIAN')) {
+    baseTeam.push({
+      id: `asg-${m.id}-tech`,
+      missionId: m.id,
+      userId: 'technician',
+      userName: 'Kỹ thuật viên bảo trì lưới',
+      assignmentRole: 'TECHNICIAN',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+    });
+  }
+
+  // Preserve local responses if available
+  const mergedTeam = baseTeam.map((mem) => {
+    if (local?.team) {
+      const localMem = local.team.find((lm) => lm.assignmentRole === mem.assignmentRole || (lm.id && lm.id === mem.id));
+      if (localMem && localMem.responseStatus === 'ACCEPTED' && mem.responseStatus !== 'ACCEPTED') {
+        return { ...mem, ...localMem };
+      }
+    }
+    return mem;
+  });
+
+  const required = mergedTeam.filter((mem) => mem.isRequired !== false && mem.status !== 'Revoked');
+  const confirmedCount = required.filter((mem) => mem.responseStatus === 'ACCEPTED').length;
+  const totalRequiredCount = Math.max(3, required.length);
+  const allConfirmed = required.length >= 3 && confirmedCount >= totalRequiredCount && required.every((mem) => mem.responseStatus === 'ACCEPTED');
+
+  if (!local) {
+    return {
+      ...m,
+      team: mergedTeam,
+      confirmedCount,
+      totalRequiredCount,
+      allConfirmed,
+      confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+      status: allConfirmed ? 'CONFIRMED' : (m.status === 'CONFIRMED' && !allConfirmed ? 'PENDING_CONFIRMATION' : m.status),
+    };
+  }
+
   return {
     ...m,
-    status: local.status || m.status,
+    team: mergedTeam,
+    confirmedCount,
+    totalRequiredCount,
+    allConfirmed,
+    confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+    status: allConfirmed ? 'CONFIRMED' : (m.status === 'CONFIRMED' && !allConfirmed ? 'PENDING_CONFIRMATION' : (local.status || m.status)),
     confirmationDeadline: local.confirmationDeadline ?? m.confirmationDeadline,
     managerInstructions: local.managerInstructions ?? m.managerInstructions,
     postponeReason: local.postponeReason ?? m.postponeReason,
@@ -266,9 +338,32 @@ export class MissionsApi {
   my(): Observable<readonly Mission[]> {
     syncMissionsWithAssessments();
     return this.http.get<unknown>(`${this.url}/my`).pipe(
-      catchError(() => this.http.get<unknown>(this.url)),
-      map((response) => {
-        const backendList = itemsValue(unwrapApiData(response)).map(normalizeMission).map(mergeWithLocalMission);
+      catchError(() => of({ data: [] })),
+      switchMap((res) => {
+        const myItems = itemsValue(unwrapApiData(res));
+        // Also fetch from main endpoint GET /missions so all backend missions are discovered
+        return this.http.get<unknown>(this.url).pipe(
+          map((allRes) => {
+            const allItems = itemsValue(unwrapApiData(allRes));
+            const map = new Map<string, unknown>();
+            for (const item of allItems) {
+              const id = stringValue(record(item)['id']);
+              if (id) map.set(id, item);
+            }
+            for (const item of myItems) {
+              const id = stringValue(record(item)['id']);
+              if (id) map.set(id, item);
+            }
+            return Array.from(map.values());
+          }),
+          catchError(() => of(myItems))
+        );
+      }),
+      map((rawItems) => {
+        const backendList = rawItems.map(normalizeMission).map(mergeWithLocalMission);
+        for (const m of backendList) {
+          saveLocalMission(m);
+        }
         return mergeListWithLocalMissions(backendList);
       }),
       catchError(() => of(Object.values(getLocalMissionsMap())))
@@ -432,10 +527,57 @@ export class MissionsApi {
           return member;
         });
 
+        // Ensure all 3 mandatory roles exist in team
+        if (!team.some((t) => t.assignmentRole === 'INSPECTOR')) {
+          team.push({
+            id: `asg-${m.id}-insp`,
+            missionId: m.id,
+            userId: m.assignedToUserId || 'inspector',
+            userName: m.assignedToUsername || 'Phi công UAV EVN',
+            assignmentRole: 'INSPECTOR',
+            status: 'Active',
+            responseStatus: role.toUpperCase() === 'INSPECTOR' ? 'ACCEPTED' : 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: role.toUpperCase() === 'INSPECTOR' ? now : null,
+            responseReason: role.toUpperCase() === 'INSPECTOR' ? notes : null,
+          });
+        }
+        if (!team.some((t) => t.assignmentRole === 'ANALYST')) {
+          team.push({
+            id: `asg-${m.id}-analyst`,
+            missionId: m.id,
+            userId: 'analyst',
+            userName: 'Chuyên viên phân tích AI',
+            assignmentRole: 'ANALYST',
+            status: 'Active',
+            responseStatus: role.toUpperCase() === 'ANALYST' ? 'ACCEPTED' : 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: role.toUpperCase() === 'ANALYST' ? now : null,
+            responseReason: role.toUpperCase() === 'ANALYST' ? notes : null,
+          });
+        }
+        if (!team.some((t) => t.assignmentRole === 'TECHNICIAN')) {
+          team.push({
+            id: `asg-${m.id}-tech`,
+            missionId: m.id,
+            userId: 'technician',
+            userName: 'Kỹ thuật viên bảo trì lưới',
+            assignmentRole: 'TECHNICIAN',
+            status: 'Active',
+            responseStatus: role.toUpperCase() === 'TECHNICIAN' ? 'ACCEPTED' : 'PENDING',
+            isRequired: true,
+            assignedAt: now,
+            respondedAt: role.toUpperCase() === 'TECHNICIAN' ? now : null,
+            responseReason: role.toUpperCase() === 'TECHNICIAN' ? notes : null,
+          });
+        }
+
         const requiredMembers = team.filter((mem) => mem.isRequired !== false && mem.status !== 'Revoked');
         const confirmedCount = requiredMembers.filter((mem) => mem.responseStatus === 'ACCEPTED').length;
-        const totalRequiredCount = Math.max(1, requiredMembers.length);
-        const allConfirmed = confirmedCount >= totalRequiredCount;
+        const totalRequiredCount = Math.max(3, requiredMembers.length);
+        const allConfirmed = requiredMembers.length >= 3 && confirmedCount >= totalRequiredCount && requiredMembers.every((mem) => mem.responseStatus === 'ACCEPTED');
 
         const newLog: MissionCommunicationLog = {
           id: `log-${Date.now()}`,
@@ -759,7 +901,104 @@ export class MissionsApi {
     return this.http
       .get<unknown>(`${this.url}/${missionId}/assignments`)
       .pipe(
-        map((res) => unwrapApiData(res) as MissionAssignmentsOverview),
+        map((res) => {
+          const raw = unwrapApiData(res);
+          if (!raw || typeof raw !== 'object') return null;
+          const data = raw as Record<string, unknown>;
+          const rawAssignments = Array.isArray(data['assignments'])
+            ? (data['assignments'] as any[])
+            : Array.isArray(raw)
+            ? (raw as any[])
+            : [];
+
+          const team: MissionAssignment[] = rawAssignments.map((item) => {
+            const member = record(item);
+            const roleRaw = stringValue(pick(member, 'assignmentRole', 'role'), 'INSPECTOR').toUpperCase();
+            const role = roleRaw.includes('PILOT') || roleRaw.includes('INSPECT')
+              ? 'INSPECTOR'
+              : roleRaw.includes('ANALYST')
+              ? 'ANALYST'
+              : roleRaw.includes('TECH')
+              ? 'TECHNICIAN'
+              : roleRaw;
+            const respRaw = stringValue(pick(member, 'responseStatus', 'status'), 'PENDING').toUpperCase();
+            const responseStatus =
+              respRaw.includes('ACCEPT') || respRaw.includes('CONFIRM')
+                ? 'ACCEPTED'
+                : respRaw.includes('POSTPONE')
+                ? 'POSTPONED'
+                : respRaw.includes('REPLACE')
+                ? 'REPLACED'
+                : 'PENDING';
+            return {
+              id: stringValue(member['id'], `asg-${Math.random().toString(36).slice(2, 7)}`),
+              missionId,
+              userId: stringValue(member['userId']),
+              userName: stringValue(pick(member, 'userName', 'name', 'fullName'), 'Thành viên'),
+              assignmentRole: role,
+              status: stringValue(member['status'], 'Active'),
+              responseStatus,
+              isRequired: member['isRequired'] !== undefined ? Boolean(member['isRequired']) : true,
+              assignedAt: member['assignedAt'] ? stringValue(member['assignedAt']) : undefined,
+              respondedAt: member['respondedAt'] ? stringValue(member['respondedAt']) : null,
+              responseReason: member['responseReason'] ? stringValue(member['responseReason']) : null,
+            };
+          });
+
+          // Ensure 3 mandatory roles exist
+          if (!team.some((m) => m.assignmentRole === 'INSPECTOR')) {
+            team.push({
+              id: `asg-${missionId}-insp`,
+              missionId,
+              userId: 'inspector',
+              userName: 'Phi công UAV EVN',
+              assignmentRole: 'INSPECTOR',
+              status: 'Active',
+              responseStatus: 'PENDING',
+              isRequired: true,
+            });
+          }
+          if (!team.some((m) => m.assignmentRole === 'ANALYST')) {
+            team.push({
+              id: `asg-${missionId}-analyst`,
+              missionId,
+              userId: 'analyst',
+              userName: 'Chuyên viên phân tích AI',
+              assignmentRole: 'ANALYST',
+              status: 'Active',
+              responseStatus: 'PENDING',
+              isRequired: true,
+            });
+          }
+          if (!team.some((m) => m.assignmentRole === 'TECHNICIAN')) {
+            team.push({
+              id: `asg-${missionId}-tech`,
+              missionId,
+              userId: 'technician',
+              userName: 'Kỹ thuật viên bảo trì lưới',
+              assignmentRole: 'TECHNICIAN',
+              status: 'Active',
+              responseStatus: 'PENDING',
+              isRequired: true,
+            });
+          }
+
+          const requiredMembers = team.filter((m) => m.isRequired !== false && m.status !== 'Revoked');
+          const confirmedCount = requiredMembers.filter((m) => m.responseStatus === 'ACCEPTED').length;
+          const totalRequiredCount = Math.max(3, requiredMembers.length);
+          const allConfirmed = requiredMembers.length >= 3 && confirmedCount >= totalRequiredCount && requiredMembers.every((m) => m.responseStatus === 'ACCEPTED');
+
+          return {
+            missionId,
+            totalRequiredCount,
+            confirmedCount,
+            allConfirmed,
+            pendingRoles: requiredMembers.filter((m) => m.responseStatus !== 'ACCEPTED').map((m) => m.assignmentRole),
+            hasPostponed: requiredMembers.some((m) => m.responseStatus === 'POSTPONED'),
+            confirmationDeadline: stringValue(data['confirmationDeadline']),
+            assignments: team,
+          };
+        }),
         catchError(() => of(null))
       );
   }
@@ -1279,10 +1518,64 @@ const normalizeMission = (value: unknown): Mission => {
     };
   });
 
+  const missionId = stringValue(source['id']);
+  const now = stringValue(source['createdAt'], new Date().toISOString());
+
+  // Guarantee all 3 mandatory roles exist in the team matrix
+  if (!team.some((m) => m.assignmentRole === 'INSPECTOR')) {
+    const assignedUserId = stringValue(source['assignedToUserId'], 'inspector');
+    const assignedUsername = stringValue(pick(source, 'assignedToUsername', 'assignedToEmail', 'inspectorEmail'), 'Phi công UAV EVN');
+    team.push({
+      id: `asg-${missionId}-insp`,
+      missionId,
+      userId: assignedUserId,
+      userName: assignedUsername,
+      assignmentRole: 'INSPECTOR',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+      assignedAt: now,
+      respondedAt: null,
+      responseReason: null,
+    });
+  }
+
+  if (!team.some((m) => m.assignmentRole === 'ANALYST')) {
+    team.push({
+      id: `asg-${missionId}-analyst`,
+      missionId,
+      userId: 'analyst',
+      userName: 'Chuyên viên phân tích AI',
+      assignmentRole: 'ANALYST',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+      assignedAt: now,
+      respondedAt: null,
+      responseReason: null,
+    });
+  }
+
+  if (!team.some((m) => m.assignmentRole === 'TECHNICIAN')) {
+    team.push({
+      id: `asg-${missionId}-tech`,
+      missionId,
+      userId: 'technician',
+      userName: 'Kỹ thuật viên bảo trì lưới',
+      assignmentRole: 'TECHNICIAN',
+      status: 'Active',
+      responseStatus: 'PENDING',
+      isRequired: true,
+      assignedAt: now,
+      respondedAt: null,
+      responseReason: null,
+    });
+  }
+
   const requiredMembers = team.filter((m) => m.isRequired !== false && m.status !== 'Revoked');
   const confirmedCount = requiredMembers.filter((m) => m.responseStatus === 'ACCEPTED').length;
-  const totalRequiredCount = Math.max(1, requiredMembers.length);
-  const allConfirmed = requiredMembers.length > 0 && confirmedCount >= requiredMembers.length;
+  const totalRequiredCount = Math.max(3, requiredMembers.length);
+  const allConfirmed = requiredMembers.length >= 3 && confirmedCount >= totalRequiredCount && requiredMembers.every((m) => m.responseStatus === 'ACCEPTED');
   const pendingRoles = requiredMembers
     .filter((m) => m.responseStatus !== 'ACCEPTED')
     .map((m) => m.assignmentRole);

@@ -32,6 +32,10 @@ export class MissionList {
   });
 
   protected readonly isInspector = computed(() => ['inspector', 'pilot'].includes((this.user()?.role ?? '').toLowerCase()));
+  protected readonly isOperationalRole = computed(() => {
+    const role = (this.user()?.role ?? '').toLowerCase();
+    return ['inspector', 'pilot', 'analyst', 'technician', 'maintenancetechnician'].includes(role);
+  });
 
   protected readonly loading = signal(true);
   protected readonly error = signal('');
@@ -39,7 +43,7 @@ export class MissionList {
   protected readonly pageSize = signal(8);
   protected readonly search = signal('');
   protected readonly status = signal('');
-  protected readonly scope = signal<'my' | 'all'>(this.isInspector() ? 'my' : 'all');
+  protected readonly scope = signal<'my' | 'all'>(this.isOperationalRole() ? 'my' : 'all');
   protected readonly response = signal<MissionPage>({ items: [], page: 1, pageSize: 8, totalCount: 0, totalPages: 1 });
   protected readonly statsTotalCount = signal(0);
   protected readonly statsItems = signal<readonly Mission[]>([]);
