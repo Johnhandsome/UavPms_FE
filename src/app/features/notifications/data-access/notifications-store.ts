@@ -2,8 +2,183 @@ import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core'
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { finalize } from 'rxjs';
 import { AppNotification, NotificationFilters, NotificationReadFilter, NotificationSort } from '../../../models/notification.models';
+import { syncMissionsWithAssessments } from '../../missions/data-access/missions-api';
 import { NotificationsApi } from './notifications-api';
-import { NotificationsRealtime } from './notifications-realtime';
+import { MissionLifecycleRealtimeEvent, NotificationsRealtime } from './notifications-realtime';
+
+const LOCAL_STORAGE_NOTIFS_KEY = 'uav_pms_notifications_v1';
+
+function getLocalNotifications(): AppNotification[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_NOTIFS_KEY) || sessionStorage.getItem(LOCAL_STORAGE_NOTIFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const active = syncActiveMissionsToNotifications();
+        const map = new Map<string, AppNotification>();
+        for (const item of parsed) map.set(item.id, item);
+        for (const item of active) {
+          if (!map.has(item.id)) map.set(item.id, item);
+        }
+        return Array.from(map.values());
+      }
+    }
+  } catch {}
+  return syncActiveMissionsToNotifications();
+}
+
+function saveLocalNotifications(list: readonly AppNotification[]): void {
+  try {
+    const json = JSON.stringify(list);
+    localStorage.setItem(LOCAL_STORAGE_NOTIFS_KEY, json);
+    sessionStorage.setItem(LOCAL_STORAGE_NOTIFS_KEY, json);
+  } catch {}
+}
+
+function syncActiveMissionsToNotifications(): AppNotification[] {
+  const list: AppNotification[] = [];
+  try {
+    syncMissionsWithAssessments();
+    const raw = localStorage.getItem('uav_pms_missions_data_v2') || sessionStorage.getItem('uav_pms_missions_data_v2');
+    if (!raw) return list;
+    const missions = JSON.parse(raw);
+    for (const m of Object.values(missions) as any[]) {
+      if (m && m.id) {
+        const s = (m.status || '').toUpperCase();
+        if (s === 'PENDING_CONFIRMATION' || s === 'ASSIGNED' || s === 'PENDING' || s === 'DRAFT') {
+          list.push({
+            id: `notif-mission-dispatch-${m.id}`,
+            title: `[MF02 ĐIỀU PHỐI] Yêu cầu xác nhận nhiệm vụ: ${m.missionCode || m.id}`,
+            body: `Bạn được phân công tham gia nhiệm vụ "${m.title || 'Khảo sát đường dây'}". Hạn chót xác nhận: ${m.confirmationDeadline ? new Date(m.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${m.managerInstructions ? ` Lời dặn: "${m.managerInstructions}"` : ''}`,
+            type: 'MISSION_DISPATCH',
+            referenceType: 'MISSION',
+            referenceId: m.id,
+            createdAt: m.createdAt || new Date().toISOString(),
+            isRead: false,
+          });
+        } else if (s === 'CONFIRMED') {
+          list.push({
+            id: `notif-mission-conf-${m.id}`,
+            title: `[MF02 TIẾP NHẬN] Nhiệm vụ ${m.missionCode || m.id} đã được xác nhận`,
+            body: `Đội bay đã xác nhận tiếp nhận nhiệm vụ "${m.title || 'Khảo sát đường dây'}". Sẵn sàng cất cánh.`,
+            type: 'MISSION_CONFIRMED',
+            referenceType: 'MISSION',
+            referenceId: m.id,
+            createdAt: m.createdAt || new Date().toISOString(),
+            isRead: true,
+          });
+        } else {
+          list.push({
+            id: `notif-mission-stat-${m.id}`,
+            title: `[MF02 NHIỆM VỤ] Thông tin nhiệm vụ: ${m.missionCode || m.id}`,
+            body: `Nhiệm vụ "${m.title || 'Khảo sát đường dây'}" đang ở trạng thái ${m.status}.`,
+            type: 'MISSION_UPDATE',
+            referenceType: 'MISSION',
+            referenceId: m.id,
+            createdAt: m.createdAt || new Date().toISOString(),
+            isRead: true,
+          });
+        }
+      }
+    }
+  } catch {}
+  return list;
+}
+
+function convertMissionEventToNotification(event: MissionLifecycleRealtimeEvent, currentUserId?: string): AppNotification | null {
+  const now = event.timestamp || new Date().toISOString();
+  const missionId = event.missionId;
+  const actor = event.actorName || (event.actorRole ? `[${event.actorRole}]` : 'Hệ thống');
+
+  switch (event.type) {
+    case 'DISPATCHED':
+      return {
+        id: `notif-disp-${missionId}`,
+        userId: currentUserId,
+        title: `[MF02 ĐIỀU PHỐI] Yêu cầu xác nhận nhiệm vụ ${missionId}`,
+        body: `Nhiệm vụ mới đã được ban hành. Hạn chót xác nhận: ${event.confirmationDeadline ? new Date(event.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${event.managerInstructions ? ` Lời dặn: "${event.managerInstructions}"` : ''}`,
+        type: 'MISSION_DISPATCH',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'CONFIRMED':
+      return {
+        id: `notif-conf-${missionId}-${event.actorRole || 'INSPECTOR'}`,
+        userId: currentUserId,
+        title: `[MF02 TIẾP NHẬN] ${actor} đã xác nhận nhiệm vụ ${missionId}`,
+        body: `Tiến độ: ${event.confirmedCount ?? 1}/${event.totalRequiredCount ?? 3}. ${event.allConfirmed ? 'Tất cả 3 vai trò đã sẵn sàng!' : 'Đang chờ các vai trò còn lại.'}`,
+        type: 'MISSION_CONFIRMED',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'POSTPONED':
+      return {
+        id: `notif-post-${missionId}`,
+        userId: currentUserId,
+        title: `[MF02 BÁO HOÃN] ${actor} đề xuất hoãn nhiệm vụ ${missionId}`,
+        body: `Lý do hoãn: "${event.reason || 'Bận việc đột xuất'}".`,
+        type: 'MISSION_POSTPONED',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'SUSPENDED':
+      return {
+        id: `notif-susp-${missionId}`,
+        userId: currentUserId,
+        title: `[MF02 ĐÌNH CHỈ] Nhiệm vụ ${missionId} bị tạm dừng`,
+        body: event.reason || 'Quản lý đã ra lệnh tạm dừng chuyến bay.',
+        type: 'MISSION_SUSPENDED',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'REMINDER':
+      return {
+        id: `notif-rem-${missionId}-${Date.now()}`,
+        userId: currentUserId,
+        title: `[MF02 NHẮC NHỞ] Quản lý nhắc nhở tiếp nhận nhiệm vụ ${missionId}`,
+        body: event.reason || 'Vui lòng xác nhận tiếp nhận trước hạn chót.',
+        type: 'MISSION_REMINDER',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'STARTED':
+      return {
+        id: `notif-start-${missionId}`,
+        userId: currentUserId,
+        title: `[MF02 CẤT CÁNH] Nhiệm vụ ${missionId} bắt đầu bay`,
+        body: 'UAV đã cất cánh và đang thực hiện hành trình bay kiểm tra.',
+        type: 'MISSION_STARTED',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    case 'COMPLETED':
+      return {
+        id: `notif-comp-${missionId}`,
+        userId: currentUserId,
+        title: `[MF02 HOÀN TẤT BAY] Nhiệm vụ ${missionId} đã hoàn tất khảo sát`,
+        body: 'UAV đã hạ cánh an toàn. Đã mở khóa cổng nạp dữ liệu ảnh/video.',
+        type: 'MISSION_COMPLETED',
+        referenceType: 'MISSION',
+        referenceId: missionId,
+        createdAt: now,
+        isRead: false,
+      };
+    default:
+      return null;
+  }
+}
 
 @Injectable({
   providedIn: 'root',
@@ -12,7 +187,7 @@ export class NotificationsStore {
   private readonly api = inject(NotificationsApi);
   private readonly realtime = inject(NotificationsRealtime);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly notificationsState = signal<readonly AppNotification[]>([]);
+  private readonly notificationsState = signal<readonly AppNotification[]>(getLocalNotifications());
   private readonly selectedState = signal<AppNotification | null>(null);
   private realtimeStarted = false;
 
@@ -45,18 +220,20 @@ export class NotificationsStore {
     this.realtime.notifications$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((notification) => this.upsert(notification));
+    this.realtime.missionEvents$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        const notif = convertMissionEventToNotification(event);
+        if (notif) this.upsert(notif);
+      });
     this.realtime.status$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((status) => this.realtimeStatus.set(status));
   }
 
   connect(userId?: string): void {
-    if (!this.realtimeStarted) {
-      this.realtimeStarted = true;
-      this.load(userId);
-      this.realtime.connect();
-      return;
-    }
+    this.realtimeStarted = true;
+    this.load(userId, false);
     this.realtime.connect();
   }
 
@@ -76,8 +253,26 @@ export class NotificationsStore {
         finalize(() => { if (showLoading) this.loading.set(false); }),
       )
       .subscribe({
-        next: (items) => this.notificationsState.set(sortNotifications(items, 'newest')),
-        error: () => this.error.set('Notifications could not be loaded.'),
+        next: (items) => {
+          const local = getLocalNotifications();
+          const mergedMap = new Map<string, AppNotification>();
+          for (const item of local) mergedMap.set(item.id, item);
+          for (const item of items) mergedMap.set(item.id, item);
+          const merged = sortNotifications(Array.from(mergedMap.values()), this.filters().sort);
+          this.notificationsState.set(merged);
+          saveLocalNotifications(merged);
+        },
+        error: () => {
+          // If backend history is unavailable, ensure active missions are synced
+          const local = getLocalNotifications();
+          const active = syncActiveMissionsToNotifications();
+          const mergedMap = new Map<string, AppNotification>();
+          for (const item of local) mergedMap.set(item.id, item);
+          for (const item of active) mergedMap.set(item.id, item);
+          const merged = sortNotifications(Array.from(mergedMap.values()), this.filters().sort);
+          this.notificationsState.set(merged);
+          saveLocalNotifications(merged);
+        },
       });
   }
 
@@ -148,14 +343,20 @@ export class NotificationsStore {
   }
 
   private patch(id: string, patch: Partial<AppNotification>): void {
-    this.notificationsState.update((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+    this.notificationsState.update((items) => {
+      const updated = items.map((item) => (item.id === id ? { ...item, ...patch } : item));
+      saveLocalNotifications(updated);
+      return updated;
+    });
     if (this.selectedState()?.id === id) this.selectedState.update((item) => (item ? { ...item, ...patch } : item));
   }
 
   upsert(notification: AppNotification): void {
     this.notificationsState.update((items) => {
       const exists = items.some((item) => item.id === notification.id);
-      return sortNotifications(exists ? items.map((item) => (item.id === notification.id ? notification : item)) : [notification, ...items], this.filters().sort);
+      const updated = sortNotifications(exists ? items.map((item) => (item.id === notification.id ? notification : item)) : [notification, ...items], this.filters().sort);
+      saveLocalNotifications(updated);
+      return updated;
     });
     if (this.selectedState()?.id === notification.id) this.selectedState.set(notification);
   }

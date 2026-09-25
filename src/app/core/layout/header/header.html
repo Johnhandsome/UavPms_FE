@@ -57,6 +57,11 @@
                 </dl>
               }
               <div class="notification-detail-actions">
+                @if (selected.referenceType === 'MISSION' || (selected.referenceId && selected.referenceId.startsWith('msn-'))) {
+                  <a class="notification-go-mission-btn" [routerLink]="isInspector() ? ['/missions', selected.referenceId, 'inspector'] : ['/missions', selected.referenceId]" (click)="closeNotifications()">
+                    <span nz-icon nzType="arrow-right"></span> Đến trang nhiệm vụ
+                  </a>
+                }
                 @if (!selected.isRead) { <button type="button" (click)="notifications.markRead(selected.id)">Đánh dấu đã đọc</button> }
                 <button type="button" class="danger" [disabled]="notifications.deletingId() === selected.id" (click)="deleteNotification($event, selected.id)">Xóa</button>
               </div>

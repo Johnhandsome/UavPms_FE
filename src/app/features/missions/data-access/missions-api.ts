@@ -266,6 +266,7 @@ export class MissionsApi {
   my(): Observable<readonly Mission[]> {
     syncMissionsWithAssessments();
     return this.http.get<unknown>(`${this.url}/my`).pipe(
+      catchError(() => this.http.get<unknown>(this.url)),
       map((response) => {
         const backendList = itemsValue(unwrapApiData(response)).map(normalizeMission).map(mergeWithLocalMission);
         return mergeListWithLocalMissions(backendList);

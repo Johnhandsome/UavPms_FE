@@ -111,30 +111,7 @@ export class MissionList {
   protected load(): void {
     this.loading.set(true);
     this.error.set('');
-    this.response.set({ items: [], page: this.page(), pageSize: this.pageSize(), totalCount: 0, totalPages: 1 });
     const filters = { page: this.page(), pageSize: this.pageSize(), search: this.search(), status: this.status() };
-    if (this.isInspector()) {
-      this.api.my().pipe(takeUntilDestroyed(this.destroyRef), finalize(() => this.loading.set(false))).subscribe({
-        next: (missions) => {
-          const query = filters.search.trim().toLowerCase();
-          const items = missions.filter((mission) => (!filters.status || mission.status === filters.status)
-            && (!query || `${mission.title} ${mission.missionCode} ${mission.description}`.toLowerCase().includes(query)));
-          this.statsItems.set(items);
-          this.statsTotalCount.set(items.length);
-          const totalPages = Math.max(1, Math.ceil(items.length / filters.pageSize));
-          const page = Math.min(filters.page, totalPages);
-          this.page.set(page);
-          this.response.set({ items: items.slice((page - 1) * filters.pageSize, page * filters.pageSize),
-            page, pageSize: filters.pageSize, totalCount: items.length, totalPages });
-        },
-        error: (error: unknown) => {
-          this.statsItems.set([]);
-          this.statsTotalCount.set(0);
-          this.error.set(this.errorMessage(error));
-        },
-      });
-      return;
-    }
     this.loadStats(filters);
     this.api.list(filters)
       .pipe(takeUntilDestroyed(this.destroyRef), finalize(() => this.loading.set(false)))

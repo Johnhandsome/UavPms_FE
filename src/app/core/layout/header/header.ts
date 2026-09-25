@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, output, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { AppNotification, NotificationReadFilter, NotificationSort } from '../../../models/notification.models';
@@ -35,6 +35,7 @@ export class Header {
     if (!u) return 'HieuHV';
     return u.fullName || u.email?.split('@')[0] || 'HieuHV';
   });
+  protected readonly isInspector = computed(() => this.user()?.role === 'Inspector');
   protected readonly groupedNotifications = computed(() => {
     const list = this.notifications.filteredNotifications();
     const groups: { dateLabel: string; items: AppNotification[] }[] = [];
@@ -58,7 +59,15 @@ export class Header {
     return groups;
   });
   constructor() {
-    this.notifications.connect(this.user()?.id);
+    effect(() => {
+      const u = this.user();
+      if (u) {
+        this.notifications.connect(u.id);
+        this.notifications.load(u.id, false);
+      } else {
+        this.notifications.disconnect();
+      }
+    });
   }
   protected logout(): void { this.notifications.disconnect(); this.auth.logout(); void this.router.navigate(['/login']); }
   protected toggleNotifications(): void {
