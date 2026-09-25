@@ -168,15 +168,21 @@
       </div>
 
       <!-- Personnel -->
-      <div class="readiness-card" [class.is-pass]="a.personnel.status === 'PASS' || a.personnel.status === 'READY'">
+      <div class="readiness-card" [class.is-pass]="(a.personnel.status === 'PASS' || a.personnel.status === 'READY') && roleBreakdown().hasAllThree">
         <div class="card-head">
-          <span class="card-title">2. Nhân sự phi công / TT</span>
-          <span class="evn-status {{ statusTone(a.personnel.status) }}">{{ statusLabel(a.personnel.status) }}</span>
+          <span class="card-title">2. Nhân sự (3 Roles bắt buộc)</span>
+          <span class="evn-status {{ roleBreakdown().hasAllThree ? 'status-pass' : 'status-fail' }}">
+            {{ roleBreakdown().hasAllThree ? 'ĐỦ ĐIỀU KIỆN' : 'THIẾU ROLE' }}
+          </span>
         </div>
         <p class="card-desc">
-          Có <strong>{{ a.personnelCandidates.length }}</strong> ứng viên đủ điều kiện trực sẵn sàng.
+          Pilot: <strong>{{ roleBreakdown().inspectors.length }}</strong> | AI: <strong>{{ roleBreakdown().analysts.length }}</strong> | Tech: <strong>{{ roleBreakdown().technicians.length }}</strong>
         </p>
-        @if (a.personnel.evaluatedAt) {
+        @if (!roleBreakdown().hasAllThree) {
+          <span style="font-size: 11px; color: #dc2626; font-weight: 500;">
+            Thiếu: {{ roleBreakdown().missingRoles.join(', ') }}
+          </span>
+        } @else if (a.personnel.evaluatedAt) {
           <span class="card-time">Đánh giá: {{ a.personnel.evaluatedAt | date:'HH:mm dd/MM' }}</span>
         }
       </div>
@@ -563,48 +569,218 @@
     <!-- Tab 3: Personnel Candidates -->
     @if (activeTab() === 'personnel') {
       <div class="evn-panel">
-        <div class="panel-header">
+        <div class="panel-header" style="flex-wrap: wrap; gap: 8px;">
           <div class="header-title-group">
-            <h3>Danh sách ứng viên nhân sự (Cán bộ giám sát / Phi công UAV)</h3>
-            <span class="panel-subinfo">MF01 hiển thị các ứng viên hợp lệ để MF02 phân công nhiệm vụ</span>
+            <h3>Đánh giá sẵn sàng nhân sự (Tối thiểu 3 vai trò: Inspector, Analyst, Technician)</h3>
+            <span class="panel-subinfo">MF01 kiểm tra nguồn ứng viên đáp ứng đồng thời 5 tiêu chuẩn bắt buộc (Logic AND) từ CSDL</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+            <!-- Filter Role Buttons -->
+            <div style="display: flex; gap: 4px; background: #e2e8f0; padding: 2px; border-radius: 4px;">
+              <button
+                type="button"
+                class="evn-btn"
+                [style.background]="selectedRoleFilter() === 'ALL' ? '#0284c7' : 'transparent'"
+                [style.color]="selectedRoleFilter() === 'ALL' ? '#fff' : '#334155'"
+                style="height: 24px; padding: 0 8px; font-size: 11px; border: 0;"
+                (click)="selectedRoleFilter.set('ALL')"
+              >
+                Tất cả ({{ filteredPersonnel().length }})
+              </button>
+              <button
+                type="button"
+                class="evn-btn"
+                [style.background]="selectedRoleFilter() === 'INSPECTOR' ? '#0284c7' : 'transparent'"
+                [style.color]="selectedRoleFilter() === 'INSPECTOR' ? '#fff' : '#334155'"
+                style="height: 24px; padding: 0 8px; font-size: 11px; border: 0;"
+                (click)="selectedRoleFilter.set('INSPECTOR')"
+              >
+                Inspector ({{ roleBreakdown().inspectors.length }})
+              </button>
+              <button
+                type="button"
+                class="evn-btn"
+                [style.background]="selectedRoleFilter() === 'ANALYST' ? '#0284c7' : 'transparent'"
+                [style.color]="selectedRoleFilter() === 'ANALYST' ? '#fff' : '#334155'"
+                style="height: 24px; padding: 0 8px; font-size: 11px; border: 0;"
+                (click)="selectedRoleFilter.set('ANALYST')"
+              >
+                Analyst ({{ roleBreakdown().analysts.length }})
+              </button>
+              <button
+                type="button"
+                class="evn-btn"
+                [style.background]="selectedRoleFilter() === 'TECHNICIAN' ? '#0284c7' : 'transparent'"
+                [style.color]="selectedRoleFilter() === 'TECHNICIAN' ? '#fff' : '#334155'"
+                style="height: 24px; padding: 0 8px; font-size: 11px; border: 0;"
+                (click)="selectedRoleFilter.set('TECHNICIAN')"
+              >
+                Technician ({{ roleBreakdown().technicians.length }})
+              </button>
+            </div>
+
             <input
               type="search"
-              placeholder="Lọc ứng viên..."
+              placeholder="Lọc tên, vai trò..."
               [value]="personnelSearch()"
               (input)="personnelSearch.set($any($event.target).value)"
               style="height: 26px; font-size: 11px; padding: 0 6px; border: 1px solid #cbd5e1; border-radius: 3px;"
             />
           </div>
         </div>
+
+        <!-- Manager Quota Configuration & Controls Bar -->
+        <div style="padding: 8px 16px; background: #eff6ff; border-bottom: 1px solid #bfdbfe; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span nz-icon nzType="team" style="color: #0369a1; font-size: 15px;"></span>
+              <strong style="color: #1e3a8a; font-size: 12px;">Định mức Manager yêu cầu:</strong>
+            </div>
+
+            @if (!editingQuotas()) {
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-size: 11.5px; background: #ffffff; border: 1px solid #93c5fd; padding: 2px 8px; border-radius: 4px; color: #1e40af;">
+                  <strong>{{ roleBreakdown().reqInspectors }}</strong> Inspector
+                </span>
+                <span style="font-size: 11.5px; background: #ffffff; border: 1px solid #c4b5fd; padding: 2px 8px; border-radius: 4px; color: #5b21b6;">
+                  <strong>{{ roleBreakdown().reqAnalysts }}</strong> Analyst
+                </span>
+                <span style="font-size: 11.5px; background: #ffffff; border: 1px solid #bbf7d0; padding: 2px 8px; border-radius: 4px; color: #15803d;">
+                  <strong>{{ roleBreakdown().reqTechnicians }}</strong> Technician
+                </span>
+                <span style="font-size: 11px; color: #475569;">(Tổng yêu cầu: <strong>{{ roleBreakdown().totalRequired }}</strong> người)</span>
+
+                @if (canManage()) {
+                  <button type="button" class="evn-btn secondary mini" (click)="startEditingQuotas()" title="Thay đổi định mức yêu cầu">
+                    <span nz-icon nzType="edit"></span> Điều chỉnh định mức
+                  </button>
+                }
+              </div>
+            } @else {
+              <!-- Edit mode -->
+              <div style="display: flex; align-items: center; gap: 8px; background: #ffffff; padding: 3px 8px; border-radius: 4px; border: 1px solid #93c5fd;">
+                <label style="font-size: 11px; margin: 0; color: #1e40af;">Inspector:
+                  <input type="number" min="1" max="20" [value]="editReqInspectors()" (input)="editReqInspectors.set(+$any($event.target).value)" style="width: 44px; height: 22px; text-align: center; font-size: 11px; font-weight: 700; border: 1px solid #93c5fd; border-radius: 3px;" />
+                </label>
+                <label style="font-size: 11px; margin: 0; color: #5b21b6;">Analyst:
+                  <input type="number" min="1" max="20" [value]="editReqAnalysts()" (input)="editReqAnalysts.set(+$any($event.target).value)" style="width: 44px; height: 22px; text-align: center; font-size: 11px; font-weight: 700; border: 1px solid #c4b5fd; border-radius: 3px;" />
+                </label>
+                <label style="font-size: 11px; margin: 0; color: #15803d;">Technician:
+                  <input type="number" min="1" max="20" [value]="editReqTechnicians()" (input)="editReqTechnicians.set(+$any($event.target).value)" style="width: 44px; height: 22px; text-align: center; font-size: 11px; font-weight: 700; border: 1px solid #bbf7d0; border-radius: 3px;" />
+                </label>
+                <button type="button" class="evn-btn primary mini" (click)="saveQuotas()" [disabled]="savingQuotas()">
+                  <span nz-icon [nzType]="savingQuotas() ? 'loading' : 'check'"></span> Lưu
+                </button>
+                <button type="button" class="evn-btn secondary mini" (click)="cancelEditingQuotas()">
+                  Hủy
+                </button>
+              </div>
+            }
+          </div>
+
+          <!-- Availability filter toggle -->
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: #0369a1; cursor: pointer; margin: 0; background: #ffffff; padding: 3px 8px; border-radius: 4px; border: 1px solid #bae6fd;" title="Chỉ lọc ra những nhân sự đang rảnh trong ca trực">
+              <input type="checkbox" [checked]="onlyAvailableFilter()" (change)="onlyAvailableFilter.set($any($event.target).checked)" />
+              <span>Chỉ hiển thị người đang rảnh (Khả dụng)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Role Breakdown Quota Evaluation Badges -->
+        <div style="padding: 10px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <span style="font-size: 12px; font-weight: 700; color: #1e293b;">
+              Kiểm tra tính sẵn sàng (CSDL):
+            </span>
+            <span class="evn-status {{ roleBreakdown().inspectors.length >= roleBreakdown().reqInspectors ? 'status-pass' : 'status-fail' }}">
+              <span nz-icon [nzType]="roleBreakdown().inspectors.length >= roleBreakdown().reqInspectors ? 'check' : 'close'"></span>
+              Inspector: {{ roleBreakdown().inspectors.length }}/{{ roleBreakdown().reqInspectors }} khả dụng
+              @if (roleBreakdown().inspectors.length < roleBreakdown().reqInspectors) {
+                <span style="margin-left: 4px; font-weight: 700;">(Thiếu {{ roleBreakdown().reqInspectors - roleBreakdown().inspectors.length }})</span>
+              }
+            </span>
+            <span class="evn-status {{ roleBreakdown().analysts.length >= roleBreakdown().reqAnalysts ? 'status-pass' : 'status-fail' }}">
+              <span nz-icon [nzType]="roleBreakdown().analysts.length >= roleBreakdown().reqAnalysts ? 'check' : 'close'"></span>
+              Analyst: {{ roleBreakdown().analysts.length }}/{{ roleBreakdown().reqAnalysts }} khả dụng
+              @if (roleBreakdown().analysts.length < roleBreakdown().reqAnalysts) {
+                <span style="margin-left: 4px; font-weight: 700;">(Thiếu {{ roleBreakdown().reqAnalysts - roleBreakdown().analysts.length }})</span>
+              }
+            </span>
+            <span class="evn-status {{ roleBreakdown().technicians.length >= roleBreakdown().reqTechnicians ? 'status-pass' : 'status-fail' }}">
+              <span nz-icon [nzType]="roleBreakdown().technicians.length >= roleBreakdown().reqTechnicians ? 'check' : 'close'"></span>
+              Technician: {{ roleBreakdown().technicians.length }}/{{ roleBreakdown().reqTechnicians }} khả dụng
+              @if (roleBreakdown().technicians.length < roleBreakdown().reqTechnicians) {
+                <span style="margin-left: 4px; font-weight: 700;">(Thiếu {{ roleBreakdown().reqTechnicians - roleBreakdown().technicians.length }})</span>
+              }
+            </span>
+          </div>
+
+          <div style="font-size: 10.5px; color: #64748b;">
+            Tiêu chí lọc AND: <strong>Eligible</strong> &bull; <strong>Active</strong> &bull; <strong>Scope</strong> &bull; <strong>Available (Rảnh)</strong> &bull; <strong>Role/Qual</strong>
+          </div>
+        </div>
+
+        @if (!roleBreakdown().hasAllThree) {
+          <div style="margin: 10px 16px; padding: 10px 14px; background: #fef2f2; border: 1px solid #fecaca; border-left: 4px solid #dc2626; border-radius: 4px; display: flex; align-items: flex-start; gap: 8px;">
+            <span nz-icon nzType="warning" style="color: #dc2626; font-size: 16px; margin-top: 1px;"></span>
+            <div>
+              <strong style="color: #991b1b; font-size: 12px;">KHÔNG ĐỦ NHÂN SỰ ĐẠT ĐỊNH MỨC:</strong>
+              <span style="color: #7f1d1d; font-size: 11.5px; margin-left: 6px;">{{ roleBreakdown().missingDetails.join('; ') }}.</span>
+              <div style="font-size: 11px; color: #991b1b; margin-top: 4px;">
+                Hệ thống chỉ tính các nhân sự đang rảnh trong CSDL (không bị trùng lịch nhiệm vụ bay). Bạn có thể điều chỉnh lại định mức hoặc bổ sung nhân sự trước khi chuyển sang MF02.
+              </div>
+            </div>
+          </div>
+        }
+
         <div class="pre-mission-table-card" style="border: 0;">
           <div class="table-scroll">
             <table>
               <thead>
                 <tr>
                   <th>Họ và tên</th>
-                  <th>Vai trò vận hành</th>
-                  <th>Chi nhánh / Khu vực</th>
-                  <th style="width: 110px;">Tình trạng</th>
-                  <th style="width: 110px;">Đủ điều kiện</th>
-                  <th style="width: 160px;">Xung đột</th>
-                  <th>Căn cứ phân công / Lý do (Reason)</th>
+                  <th style="width: 140px;">Vai trò vận hành</th>
+                  <th>Khu vực / Chi nhánh</th>
+                  <th style="width: 110px;">Ca trực</th>
+                  <th style="width: 110px;">Lịch trình</th>
+                  <th style="width: 120px;">Đủ điều kiện</th>
+                  <th style="width: 150px;">Xung đột</th>
+                  <th>Chứng chỉ & Căn cứ phê duyệt</th>
                 </tr>
               </thead>
               <tbody>
                 @if (!filteredPersonnel().length) {
                   <tr>
-                    <td colspan="7" class="text-center" style="padding: 16px; color: #64748b;">
+                    <td colspan="8" class="text-center" style="padding: 16px; color: #64748b;">
                       Chưa tìm thấy ứng viên nhân sự phù hợp điều kiện lọc.
                     </td>
                   </tr>
                 } @else {
                   @for (person of filteredPersonnel(); track person.id) {
                     <tr>
-                      <td><strong>{{ person.name }}</strong></td>
-                      <td>{{ person.role }}</td>
+                      <td>
+                        <strong>{{ person.name }}</strong>
+                        @if (person.qualificationDetails) {
+                          <div style="font-size: 10px; color: #64748b;">{{ person.qualificationDetails }}</div>
+                        }
+                      </td>
+                      <td>
+                        <span
+                          class="evn-status"
+                          [style.background]="person.role.includes('INSPECT') ? '#eff6ff' : person.role.includes('ANALYST') ? '#f5f3ff' : '#ecfdf5'"
+                          [style.color]="person.role.includes('INSPECT') ? '#1d4ed8' : person.role.includes('ANALYST') ? '#6d28d9' : '#047857'"
+                          style="font-weight: 600;"
+                        >
+                          {{ person.role }}
+                        </span>
+                      </td>
                       <td>{{ person.region || a.regionName }}</td>
+                      <td class="text-center">
+                        <span class="evn-status {{ person.isActive !== false ? 'status-pass' : 'status-fail' }}">
+                          {{ person.isActive !== false ? 'Đang trực' : 'Nghỉ ca' }}
+                        </span>
+                      </td>
                       <td class="text-center">
                         <span class="evn-status {{ statusTone(person.availability) }}">
                           {{ person.availability }}
@@ -624,7 +800,7 @@
                       </td>
                       <td>
                         <span style="font-size: 11px; color: #334155;">
-                          {{ person.reason || 'Đủ tiêu chuẩn chứng chỉ & kinh nghiệm vận hành lưới điện' }}
+                          {{ person.reason || 'Đạt đầy đủ 5 tiêu chuẩn sẵn sàng vận hành' }}
                         </span>
                       </td>
                     </tr>
@@ -886,7 +1062,11 @@
           <strong style="color: #003f99; text-transform: uppercase;">{{ statusLabel(a.status) }}</strong>
           @if (!canProceedToMf02()) {
             <span style="color: #dc2626; margin-left: 8px;">
-              (Cần đạt trạng thái READY, chưa tiêu thụ và còn hạn hiệu lực để tạo nhiệm vụ)
+              @if (!roleBreakdown().hasAllThree) {
+                (Chưa đạt định mức: {{ roleBreakdown().missingDetails.join('; ') }})
+              } @else {
+                (Cần đạt trạng thái READY, chưa tiêu thụ và còn hạn hiệu lực để tạo nhiệm vụ)
+              }
             </span>
           }
         </span>
@@ -919,6 +1099,16 @@
           >
             <span nz-icon nzType="arrow-right"></span> Chuyển sang tạo nhiệm vụ (MF02)
           </a>
+        } @else {
+          <button
+            type="button"
+            class="evn-btn primary"
+            style="opacity: 0.5; cursor: not-allowed;"
+            disabled
+            [title]="!roleBreakdown().hasAllThree ? ('Chưa đủ định mức nhân sự: ' + roleBreakdown().missingDetails.join('; ')) : 'Hồ sơ chưa đạt trạng thái READY hoặc đã hết hạn'"
+          >
+            <span nz-icon nzType="arrow-right"></span> Chuyển sang tạo nhiệm vụ (MF02)
+          </button>
         }
       </div>
     </footer>

@@ -17,6 +17,7 @@ import { NzIconModule } from 'ng-zorro-antd/icon';
 import { Auth } from '../../../../core/auth/auth';
 import {
   DroneTechnicalInspectionResult,
+  PersonnelCandidate,
   PreMissionAssessment,
   UavCandidate,
 } from '../../../../models/pre-mission.models';
@@ -106,8 +107,104 @@ export class AssessmentWorkspace implements AfterViewInit, OnDestroy {
 
   protected readonly isConsumed = this.isCompleted;
 
+  protected readonly selectedRoleFilter = signal<'ALL' | 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN'>('ALL');
+  protected readonly onlyAvailableFilter = signal<boolean>(true);
+  protected readonly editingQuotas = signal<boolean>(false);
+  protected readonly editReqInspectors = signal<number>(1);
+  protected readonly editReqAnalysts = signal<number>(1);
+  protected readonly editReqTechnicians = signal<number>(1);
+  protected readonly savingQuotas = signal<boolean>(false);
+
+  // Multi-role breakdown check (Inspector, Analyst, Technician against Manager quotas with 5 AND criteria)
+  protected readonly roleBreakdown = computed(() => {
+    const a = this.item();
+    const reqInspectors = a?.requiredInspectors ?? 1;
+    const reqAnalysts = a?.requiredAnalysts ?? 1;
+    const reqTechnicians = a?.requiredTechnicians ?? 1;
+
+    if (!a) {
+      return {
+        inspectors: [] as PersonnelCandidate[],
+        analysts: [] as PersonnelCandidate[],
+        technicians: [] as PersonnelCandidate[],
+        allAvailable: [] as PersonnelCandidate[],
+        reqInspectors,
+        reqAnalysts,
+        reqTechnicians,
+        hasAllThree: false,
+        missingDetails: ['Chưa tải được dữ liệu nhân sự'],
+        missingRoles: ['Chưa tải dữ liệu'],
+        totalEligible: 0,
+        totalRequired: reqInspectors + reqAnalysts + reqTechnicians,
+      };
+    }
+    const candidates = a.personnelCandidates || [];
+
+    // 5-point AND criteria check (Chỉ người đang rảnh, active, eligible, scope)
+    const isCandidateEligibleAndFree = (c: PersonnelCandidate) => {
+      const activeOk = c.isActive !== false;
+      const scopeOk = c.isWithinScope !== false;
+      const eligOk = c.isEligible !== false && (c.eligibility?.toUpperCase() === 'ELIGIBLE' || c.overallEligibility === 'ELIGIBLE' || c.overallEligibility === true);
+      const availOk = c.isAvailable !== false && c.availability?.toUpperCase() === 'AVAILABLE' && !c.conflict;
+      return activeOk && scopeOk && eligOk && availOk;
+    };
+
+    const allAvailable = candidates.filter(isCandidateEligibleAndFree);
+
+    const inspectors = candidates.filter((c) => {
+      const r = (c.role || '').toUpperCase();
+      return (r.includes('INSPECT') || r.includes('PILOT')) && isCandidateEligibleAndFree(c);
+    });
+
+    const analysts = candidates.filter((c) => {
+      const r = (c.role || '').toUpperCase();
+      return r.includes('ANALYST') && isCandidateEligibleAndFree(c);
+    });
+
+    const technicians = candidates.filter((c) => {
+      const r = (c.role || '').toUpperCase();
+      return (r.includes('TECH') || r.includes('MAINTENANCE')) && isCandidateEligibleAndFree(c);
+    });
+
+    const missingDetails: string[] = [];
+    const missingRoles: string[] = [];
+    if (inspectors.length < reqInspectors) {
+      missingDetails.push(`Inspector: thiếu ${reqInspectors - inspectors.length} người (${inspectors.length}/${reqInspectors} khả dụng)`);
+      missingRoles.push(`Inspector (${inspectors.length}/${reqInspectors})`);
+    }
+    if (analysts.length < reqAnalysts) {
+      missingDetails.push(`Analyst: thiếu ${reqAnalysts - analysts.length} người (${analysts.length}/${reqAnalysts} khả dụng)`);
+      missingRoles.push(`Analyst (${analysts.length}/${reqAnalysts})`);
+    }
+    if (technicians.length < reqTechnicians) {
+      missingDetails.push(`Technician: thiếu ${reqTechnicians - technicians.length} người (${technicians.length}/${reqTechnicians} khả dụng)`);
+      missingRoles.push(`Technician (${technicians.length}/${reqTechnicians})`);
+    }
+
+    return {
+      inspectors,
+      analysts,
+      technicians,
+      allAvailable,
+      reqInspectors,
+      reqAnalysts,
+      reqTechnicians,
+      hasAllThree: missingDetails.length === 0,
+      missingDetails,
+      missingRoles,
+      totalEligible: inspectors.length + analysts.length + technicians.length,
+      totalRequired: reqInspectors + reqAnalysts + reqTechnicians,
+    };
+  });
+
   protected readonly canProceedToMf02 = computed(() => {
-    return this.isReady() && !this.isExpired() && !this.isCompleted() && !this.isCancelled();
+    return (
+      this.isReady() &&
+      !this.isExpired() &&
+      !this.isCompleted() &&
+      !this.isCancelled() &&
+      this.roleBreakdown().hasAllThree
+    );
   });
 
   protected readonly failedConditions = computed(() => {
@@ -124,12 +221,16 @@ export class AssessmentWorkspace implements AfterViewInit, OnDestroy {
       });
     }
 
-    if (a.personnel.status !== 'PASS' && a.personnel.status !== 'READY') {
+    const roles = this.roleBreakdown();
+    if ((a.personnel.status !== 'PASS' && a.personnel.status !== 'READY') || !roles.hasAllThree) {
+      const reasonMsg = roles.missingDetails.length > 0
+        ? `Không đạt định mức nhân sự đang rảnh: ${roles.missingDetails.join('; ')}.`
+        : (a.personnel.reason || 'Chưa đủ ứng viên đạt chuẩn.');
       list.push({
-        pillar: 'Nhân sự vận hành',
-        reason: a.personnel.reason || 'Chưa có đủ ứng viên phi công / cán bộ giám sát đạt chuẩn khả dụng.',
+        pillar: 'Nhân sự vận hành (Không đủ định mức)',
+        reason: `${reasonMsg} Hệ thống kiểm tra CSDL và chỉ tính nhân sự đang rảnh thỏa mãn đồng thời 5 tiêu chuẩn: Eligible AND Active AND Within Region/Scope AND Available during proposed time AND Has required role/qualification.`,
         actionTab: 'personnel',
-        actionLabel: 'Kiểm tra ứng viên nhân sự',
+        actionLabel: 'Kiểm tra & Điều chỉnh định mức',
       });
     }
 
@@ -157,12 +258,71 @@ export class AssessmentWorkspace implements AfterViewInit, OnDestroy {
   protected readonly filteredPersonnel = computed(() => {
     const a = this.item();
     if (!a) return [];
+    let list = a.personnelCandidates || [];
+
+    // Filter "chỉ ra những người đang rảnh thôi"
+    if (this.onlyAvailableFilter()) {
+      list = list.filter((p) => p.isAvailable !== false && p.availability?.toUpperCase() === 'AVAILABLE' && !p.conflict);
+    }
+
+    const roleFilter = this.selectedRoleFilter();
+    if (roleFilter !== 'ALL') {
+      list = list.filter((p) => {
+        const r = (p.role || '').toUpperCase();
+        if (roleFilter === 'INSPECTOR') return r.includes('INSPECT') || r.includes('PILOT');
+        if (roleFilter === 'ANALYST') return r.includes('ANALYST');
+        if (roleFilter === 'TECHNICIAN') return r.includes('TECH') || r.includes('MAINTENANCE');
+        return true;
+      });
+    }
+
     const q = this.personnelSearch().trim().toLowerCase();
-    if (!q) return a.personnelCandidates;
-    return a.personnelCandidates.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.role.toLowerCase().includes(q) || (p.region && p.region.toLowerCase().includes(q))
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.role.toLowerCase().includes(q) ||
+        (p.region && p.region.toLowerCase().includes(q)) ||
+        (p.qualificationDetails && p.qualificationDetails.toLowerCase().includes(q))
     );
   });
+
+  protected startEditingQuotas(): void {
+    const a = this.item();
+    if (!a) return;
+    this.editReqInspectors.set(a.requiredInspectors ?? 1);
+    this.editReqAnalysts.set(a.requiredAnalysts ?? 1);
+    this.editReqTechnicians.set(a.requiredTechnicians ?? 1);
+    this.editingQuotas.set(true);
+  }
+
+  protected cancelEditingQuotas(): void {
+    this.editingQuotas.set(false);
+  }
+
+  protected saveQuotas(): void {
+    const a = this.item();
+    if (!a || this.savingQuotas()) return;
+    this.savingQuotas.set(true);
+    const quotas = {
+      requiredInspectors: Math.max(1, this.editReqInspectors()),
+      requiredAnalysts: Math.max(1, this.editReqAnalysts()),
+      requiredTechnicians: Math.max(1, this.editReqTechnicians()),
+    };
+
+    this.api.updateQuotas(a.id, quotas).subscribe({
+      next: (updated) => {
+        this.savingQuotas.set(false);
+        this.editingQuotas.set(false);
+        this.item.set(updated);
+        this.actionMessage.set(`Đã cập nhật định mức: ${quotas.requiredInspectors} Inspector, ${quotas.requiredAnalysts} Analyst, ${quotas.requiredTechnicians} Technician.`);
+        setTimeout(() => this.actionMessage.set(''), 4000);
+      },
+      error: () => {
+        this.savingQuotas.set(false);
+      }
+    });
+  }
 
   constructor() {
     this.load();

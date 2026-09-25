@@ -101,9 +101,19 @@ export class AssessmentCreate implements AfterViewInit, OnDestroy {
       plannedEnd: [this.defaultEnd, [Validators.required]],
       corridorBufferMeters: [50, [Validators.required, Validators.min(10), Validators.max(500)]],
       maxFlightAltitudeMeters: [120, [Validators.required, Validators.min(20), Validators.max(120)]],
+      requiredInspectors: [1, [Validators.required, Validators.min(1)]],
+      requiredAnalysts: [1, [Validators.required, Validators.min(1)]],
+      requiredTechnicians: [1, [Validators.required, Validators.min(1)]],
     },
     { validators: [dateWindowValidator, notObsoleteWindowValidator] }
   );
+
+  protected readonly totalRequiredPersonnel = computed(() => {
+    const insp = Number(this.form.controls.requiredInspectors.value) || 0;
+    const ana = Number(this.form.controls.requiredAnalysts.value) || 0;
+    const tech = Number(this.form.controls.requiredTechnicians.value) || 0;
+    return insp + ana + tech;
+  });
 
   protected readonly selectedRegionObj = computed(() => {
     const id = this.form.controls.regionId.value;
@@ -614,6 +624,9 @@ export class AssessmentCreate implements AfterViewInit, OnDestroy {
         plannedStart: raw.plannedStart,
         plannedEnd: raw.plannedEnd,
         scopeAssetIds: assetIds,
+        requiredInspectors: raw.requiredInspectors,
+        requiredAnalysts: raw.requiredAnalysts,
+        requiredTechnicians: raw.requiredTechnicians,
         scopeGeometry: {
           corridorBufferMeters: raw.corridorBufferMeters,
           maxFlightAltitudeMeters: raw.maxFlightAltitudeMeters,

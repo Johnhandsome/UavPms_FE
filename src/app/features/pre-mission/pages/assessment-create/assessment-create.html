@@ -221,7 +221,7 @@
           </div>
         </div>
 
-        <!-- Box 3: Vùng hoạt động GIS đề xuất (Fixed Height) -->
+        <!-- Box 3: Vùng hoạt động GIS đề xuất -->
         <div class="evn-panel box-gis">
           <div class="panel-header">
             <h3>3. Vùng hoạt động GIS & Ranh giới an toàn đề xuất</h3>
@@ -265,7 +265,97 @@
           </div>
         </div>
 
-        <!-- Form Actions Bar (Fixed Height) -->
+        <!-- Box 4: Định mức nhân sự yêu cầu (3 vai trò bắt buộc) -->
+        <div class="evn-panel box-quotas">
+          <div class="panel-header">
+            <div class="quota-header-title">
+              <span nz-icon nzType="team" style="color: #0369a1;"></span>
+              <h3>4. Định mức nhân sự yêu cầu (Tối thiểu 3 vai trò)</h3>
+            </div>
+            <span class="panel-badge">Bắt buộc</span>
+          </div>
+          <div class="panel-body">
+            <p class="quota-guide-text">
+              Manager chỉ định số người cần thiết để đánh giá sẵn sàng. Hệ thống sẽ truy vấn CSDL và chỉ chọn những nhân sự <strong>đang rảnh</strong> (không trùng lịch nhiệm vụ) đáp ứng 5 tiêu chuẩn để thẩm định.
+            </p>
+            <div class="quota-grid">
+              <!-- Cột 1: Inspector -->
+              <div class="form-group quota-item">
+                <div class="quota-label-wrapper">
+                  <label for="requiredInspectors" class="quota-role-title">
+                    <span class="role-dot dot-inspector"></span>
+                    Số Inspector (Phi công) <span class="required">*</span>
+                  </label>
+                  <span class="quota-role-hint">Tối thiểu 1 phi công bay</span>
+                </div>
+                <div class="quota-input-wrapper">
+                  <input
+                    id="requiredInspectors"
+                    type="number"
+                    min="1"
+                    max="20"
+                    formControlName="requiredInspectors"
+                    class="quota-input"
+                    [class.has-error]="form.controls.requiredInspectors.touched && form.controls.requiredInspectors.invalid"
+                  />
+                  <span class="unit-suffix">người</span>
+                </div>
+              </div>
+
+              <!-- Cột 2: Analyst -->
+              <div class="form-group quota-item">
+                <div class="quota-label-wrapper">
+                  <label for="requiredAnalysts" class="quota-role-title">
+                    <span class="role-dot dot-analyst"></span>
+                    Số Analyst (Chuyên viên AI) <span class="required">*</span>
+                  </label>
+                  <span class="quota-role-hint">Tối thiểu 1 thẩm định ảnh AI</span>
+                </div>
+                <div class="quota-input-wrapper">
+                  <input
+                    id="requiredAnalysts"
+                    type="number"
+                    min="1"
+                    max="20"
+                    formControlName="requiredAnalysts"
+                    class="quota-input"
+                    [class.has-error]="form.controls.requiredAnalysts.touched && form.controls.requiredAnalysts.invalid"
+                  />
+                  <span class="unit-suffix">người</span>
+                </div>
+              </div>
+
+              <!-- Cột 3: Technician -->
+              <div class="form-group quota-item">
+                <div class="quota-label-wrapper">
+                  <label for="requiredTechnicians" class="quota-role-title">
+                    <span class="role-dot dot-technician"></span>
+                    Số Technician (Kỹ thuật viên) <span class="required">*</span>
+                  </label>
+                  <span class="quota-role-hint">Tối thiểu 1 kỹ thuật trạm pin/UAV</span>
+                </div>
+                <div class="quota-input-wrapper">
+                  <input
+                    id="requiredTechnicians"
+                    type="number"
+                    min="1"
+                    max="20"
+                    formControlName="requiredTechnicians"
+                    class="quota-input"
+                    [class.has-error]="form.controls.requiredTechnicians.touched && form.controls.requiredTechnicians.invalid"
+                  />
+                  <span class="unit-suffix">người</span>
+                </div>
+              </div>
+            </div>
+            <div class="quota-summary-bar">
+              <span nz-icon nzType="info-circle" style="color: #0284c7;"></span>
+              <span>Định mức thiết lập: <strong>{{ totalRequiredPersonnel() }} người</strong> ({{ form.controls.requiredInspectors.value }} Inspector, {{ form.controls.requiredAnalysts.value }} Analyst, {{ form.controls.requiredTechnicians.value }} Technician)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form Actions Bar -->
         <div class="form-actions-bar">
           <a class="evn-btn secondary" routerLink="/pre-mission">
             Hủy bỏ
@@ -286,7 +376,7 @@
         <div class="evn-panel box-map">
           <div class="panel-header">
             <div class="map-header-title" title="Bản đồ xem trước phạm vi GIS & Vùng an toàn">
-              <span nz-icon nzType="compass" style="color: #0369a1;"></span>
+              <span nz-icon nzType="compass"></span>
               <h3>Bản đồ GIS & Vùng an toàn</h3>
             </div>
             <div class="map-header-actions">
@@ -316,11 +406,11 @@
                   Chuẩn
                 </button>
               </div>
-              <button type="button" class="evn-btn secondary mini" (click)="fitMapToBounds()"
+              <button type="button" class="map-action-btn" (click)="fitMapToBounds()"
                 title="Thu phóng toàn cảnh các vị trí cột đã chọn">
                 <span nz-icon nzType="fullscreen"></span> Căn chỉnh
               </button>
-              <button type="button" class="evn-btn secondary mini" (click)="refreshMap()"
+              <button type="button" class="map-action-btn" (click)="refreshMap()"
                 title="Tải lại khung nhìn bản đồ">
                 <span nz-icon nzType="reload"></span> Làm mới
               </button>
@@ -362,12 +452,12 @@
           </div>
         </div>
 
-        <!-- Box 4: Tóm tắt thông số đánh giá (Fixed Height = 290px) -->
+        <!-- Box 5: Tóm tắt thông số đánh giá -->
         <div class="evn-panel box-summary">
           <div class="panel-header">
             <div style="display: flex; align-items: center; gap: 6px;">
               <span nz-icon nzType="profile" style="color: #143d7d;"></span>
-              <h3>4. Tóm tắt thông số đánh giá (Assessment Summary)</h3>
+              <h3>5. Tóm tắt thông số đánh giá (Assessment Summary)</h3>
             </div>
           </div>
           <div class="panel-body">
@@ -403,9 +493,15 @@
                   form.controls.maxFlightAltitudeMeters.value }}m AGL
                 </strong>
               </div>
+              <div class="summary-row">
+                <span class="summary-label">Định mức nhân sự:</span>
+                <strong class="summary-value" style="color: #003f99;">
+                  {{ totalRequiredPersonnel() }} người ({{ form.controls.requiredInspectors.value }} Insp, {{ form.controls.requiredAnalysts.value }} Ana, {{ form.controls.requiredTechnicians.value }} Tech)
+                </strong>
+              </div>
               <div class="summary-status-banner">
                 <span nz-icon nzType="safety-certificate" style="color: #047857; font-size: 14px;"></span>
-                <span>Hệ thống tự động kiểm tra 6 tiêu chuẩn an toàn mặt bằng, thời tiết và UAV sau khi tạo.</span>
+                <span>Hệ thống tự động kiểm tra CSDL nhân sự rảnh, 6 tiêu chuẩn mặt bằng & UAV sau khi tạo.</span>
               </div>
             </div>
           </div>
