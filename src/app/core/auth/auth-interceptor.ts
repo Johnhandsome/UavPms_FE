@@ -25,20 +25,9 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         );
       }
 
-      // 403 Forbidden handling
-      if (error.status === 403 && !isAuthRequest) {
-        // Navigation to 403 page on forbidden page/data access
-        // Avoid kicking user out for component-level sub-resource queries
-        const isComponentSubResource =
-          req.url.includes('/ai-analysis/') ||
-          req.url.includes('/detections') ||
-          req.url.includes('/anomalies/') ||
-          req.url.includes('/gis/') ||
-          req.url.includes('/alerts/');
-        if (req.method === 'GET' && !isComponentSubResource) {
-          void router.navigate(['/403']);
-        }
-      }
+      // 403 Forbidden handling:
+      // Route access is strictly enforced by route-level roleGuard.
+      // Component-level API errors are handled gracefully via catchError, avoiding kicking user out of permitted routes.
 
       return throwError(() => error);
     }),
