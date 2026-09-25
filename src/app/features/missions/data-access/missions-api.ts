@@ -26,10 +26,55 @@ export interface MissionFilters {
 
 const LOCAL_STORAGE_MISSIONS_KEY = 'uav_pms_missions_data_v2';
 
+export function cleanLegacyMockNames(m: Mission): Mission {
+  if (!m) return m;
+  const sanitize = (name?: string | null): string => {
+    if (!name) return '';
+    if (name.includes('Nguyễn Văn An')) return 'inspector';
+    if (name.includes('Lê Thị Mai')) return 'analyst';
+    if (name.includes('Phạm Quốc Toàn')) return 'technician';
+    if (name.includes('Trần Đình Trọng')) return 'manager';
+    return name;
+  };
+
+  return {
+    ...m,
+    assignedToUsername: sanitize(m.assignedToUsername),
+    managerUsername: sanitize(m.managerUsername),
+    team: (m.team || []).map((mem) => ({
+      ...mem,
+      userName: sanitize(mem.userName),
+      userFullName: sanitize(mem.userFullName),
+    })),
+    communicationLogs: (m.communicationLogs || []).map((l) => ({
+      ...l,
+      senderName: sanitize(l.senderName),
+      content: l.content
+        ? l.content
+            .replace(/Nguyễn Văn An \(Phi công\)/g, 'inspector')
+            .replace(/Nguyễn Văn An \(Phi công UAV\)/g, 'inspector')
+            .replace(/Nguyễn Văn An/g, 'inspector')
+            .replace(/Lê Thị Mai \(Chuyên viên AI\)/g, 'analyst')
+            .replace(/Lê Thị Mai/g, 'analyst')
+            .replace(/Phạm Quốc Toàn \(Kỹ thuật viên\)/g, 'technician')
+            .replace(/Phạm Quốc Toàn/g, 'technician')
+            .replace(/Trần Đình Trọng \(Quản lý\)/g, 'manager')
+            .replace(/Trần Đình Trọng/g, 'manager')
+        : l.content,
+    })),
+  };
+}
+
 function getLocalMissionsMap(): Record<string, Mission> {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_MISSIONS_KEY) || sessionStorage.getItem(LOCAL_STORAGE_MISSIONS_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const cleaned: Record<string, Mission> = {};
+    for (const k of Object.keys(parsed)) {
+      cleaned[k] = cleanLegacyMockNames(parsed[k]);
+    }
+    return cleaned;
   } catch {
     return {};
   }
@@ -37,13 +82,15 @@ function getLocalMissionsMap(): Record<string, Mission> {
 
 export function getLocalMission(id: string): Mission | null {
   const map = getLocalMissionsMap();
-  return map[id] || null;
+  const m = map[id] || null;
+  return m ? cleanLegacyMockNames(m) : null;
 }
 
 export function saveLocalMission(mission: Mission): void {
   try {
+    const cleaned = cleanLegacyMockNames(mission);
     const map = getLocalMissionsMap();
-    map[mission.id] = mission;
+    map[cleaned.id] = cleaned;
     const json = JSON.stringify(map);
     localStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
     sessionStorage.setItem(LOCAL_STORAGE_MISSIONS_KEY, json);
@@ -789,11 +836,12 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
           missionId: id,
           userId: a.userId,
           userName:
-            a.role === 'INSPECTOR'
-              ? 'Nguyễn Văn An (Phi công)'
+            (a as any).userName ||
+            (a.role === 'INSPECTOR'
+              ? 'inspector'
               : a.role === 'ANALYST'
-              ? 'Lê Thị Mai (Chuyên viên AI)'
-              : 'Phạm Quốc Toàn (Kỹ thuật viên)',
+              ? 'analyst'
+              : 'technician'),
           assignmentRole: a.role,
           status: 'Active',
           responseStatus: 'PENDING',
@@ -806,8 +854,8 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
           {
             id: `asg-${id}-1`,
             missionId: id,
-            userId: request.inspectorId || 'usr-pilot-01',
-            userName: 'Nguyễn Văn An (Phi công)',
+            userId: request.inspectorId || 'inspector',
+            userName: 'inspector',
             assignmentRole: 'INSPECTOR',
             status: 'Active',
             responseStatus: 'PENDING',
@@ -819,8 +867,8 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
           {
             id: `asg-${id}-2`,
             missionId: id,
-            userId: 'usr-analyst-02',
-            userName: 'Lê Thị Mai (Chuyên viên AI)',
+            userId: 'analyst',
+            userName: 'analyst',
             assignmentRole: 'ANALYST',
             status: 'Active',
             responseStatus: 'PENDING',
@@ -832,8 +880,8 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
           {
             id: `asg-${id}-3`,
             missionId: id,
-            userId: 'usr-tech-03',
-            userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+            userId: 'technician',
+            userName: 'technician',
             assignmentRole: 'TECHNICIAN',
             status: 'Active',
             responseStatus: 'PENDING',
@@ -849,13 +897,13 @@ function createSimulatedMission(request: MissionCreateRequest): Mission {
     missionCode: `MSN-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
     title: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
     routeData: `Tuyến khảo sát ${targetAssetIds.length} vị trí cột`,
-    assignedToUserId: request.inspectorId || 'usr-pilot-01',
-    assignedToUsername: 'Nguyễn Văn An (Phi công)',
+    assignedToUserId: request.inspectorId || 'inspector',
+    assignedToUsername: 'inspector',
     droneCode: request.droneId || (request.droneIds && request.droneIds[0]) || 'UAV-EVN-01',
     status: 'PENDING_CONFIRMATION',
     description: request.description,
-    managerId: 'manager-01',
-    managerUsername: 'Quản lý vận hành EVN',
+    managerId: 'manager',
+    managerUsername: 'manager',
     createdAt: now,
     updatedAt: now,
     targets: targetAssetIds.map((code, idx) => ({
@@ -922,13 +970,13 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
     missionCode: `MSN-2026-${suffix}`,
     title: `Khảo sát ${regionName} - ${lineName} [${code}]`,
     routeData: `Tuyến ${lineName} (${assets.length} vị trí cột)`,
-    assignedToUserId: 'usr-pilot-01',
-    assignedToUsername: 'Nguyễn Văn An (Phi công UAV)',
+    assignedToUserId: 'inspector',
+    assignedToUsername: 'inspector',
     droneCode: 'UAV-EVN-01',
     status: 'PENDING_CONFIRMATION',
     description: `Nhiệm vụ kiểm tra hành lang tuyến kế thừa từ Đánh giá tiền nhiệm vụ ${code}.`,
-    managerId: 'usr-mgr-01',
-    managerUsername: 'Trần Đình Trọng (Quản lý)',
+    managerId: 'manager',
+    managerUsername: 'manager',
     createdAt: String(ass['updatedAt'] || ass['createdAt'] || now),
     updatedAt: now,
     scheduledStartAt: plannedStart,
@@ -957,8 +1005,8 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
       {
         id: `asg-${mId}-1`,
         missionId: mId,
-        userId: 'usr-pilot-01',
-        userName: 'Nguyễn Văn An (Phi công)',
+        userId: 'inspector',
+        userName: 'inspector',
         assignmentRole: 'INSPECTOR',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -970,8 +1018,8 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
       {
         id: `asg-${mId}-2`,
         missionId: mId,
-        userId: 'usr-analyst-02',
-        userName: 'Lê Thị Mai (Chuyên viên AI)',
+        userId: 'analyst',
+        userName: 'analyst',
         assignmentRole: 'ANALYST',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -983,8 +1031,8 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
       {
         id: `asg-${mId}-3`,
         missionId: mId,
-        userId: 'usr-tech-03',
-        userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+        userId: 'technician',
+        userName: 'technician',
         assignmentRole: 'TECHNICIAN',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -1002,8 +1050,8 @@ function createMissionFromAssessment(ass: Record<string, unknown>, mId: string):
     communicationLogs: [
       {
         id: `log-${Date.now()}`,
-        senderId: 'usr-mgr-01',
-        senderName: 'Trần Đình Trọng (Quản lý)',
+        senderId: 'manager',
+        senderName: 'manager',
         senderRole: 'MANAGER',
         type: 'DISPATCH',
         content: `Đã ban hành nhiệm vụ tới cả 3 vai trò (Inspector, Analyst, Technician). Hạn chót xác nhận: ${new Date(deadline).toLocaleString('vi-VN')}. Lời dặn: Yêu cầu kiểm tra kỹ khoảng cách an toàn hành lang lưới điện.`,
@@ -1043,13 +1091,13 @@ function createSimulatedMissionById(id: string): Mission {
     missionCode: `MSN-2026-${suffix}`,
     title: 'Khảo sát định kỳ tuyến đường dây 220kV Đà Nẵng - Hòa Khánh',
     routeData: 'Tuyến đường dây 220kV Đà Nẵng - Hòa Khánh',
-    assignedToUserId: 'usr-pilot-01',
-    assignedToUsername: 'Nguyễn Văn An (Phi công UAV)',
+    assignedToUserId: 'inspector',
+    assignedToUsername: 'inspector',
     droneCode: 'UAV-EVN-01',
     status: 'PENDING_CONFIRMATION',
     description: 'Nhiệm vụ kiểm tra hành lang tuyến và các điểm tiếp xúc nhiệt chuỗi cách điện.',
-    managerId: 'usr-mgr-01',
-    managerUsername: 'Trần Đình Trọng (Quản lý)',
+    managerId: 'manager',
+    managerUsername: 'manager',
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     scheduledStartAt: start.toISOString(),
@@ -1078,8 +1126,8 @@ function createSimulatedMissionById(id: string): Mission {
       {
         id: `asg-${id}-1`,
         missionId: id,
-        userId: 'usr-pilot-01',
-        userName: 'Nguyễn Văn An (Phi công)',
+        userId: 'inspector',
+        userName: 'inspector',
         assignmentRole: 'INSPECTOR',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -1091,8 +1139,8 @@ function createSimulatedMissionById(id: string): Mission {
       {
         id: `asg-${id}-2`,
         missionId: id,
-        userId: 'usr-analyst-02',
-        userName: 'Lê Thị Mai (Chuyên viên AI)',
+        userId: 'analyst',
+        userName: 'analyst',
         assignmentRole: 'ANALYST',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -1104,8 +1152,8 @@ function createSimulatedMissionById(id: string): Mission {
       {
         id: `asg-${id}-3`,
         missionId: id,
-        userId: 'usr-tech-03',
-        userName: 'Phạm Quốc Toàn (Kỹ thuật viên)',
+        userId: 'technician',
+        userName: 'technician',
         assignmentRole: 'TECHNICIAN',
         status: 'Active',
         responseStatus: 'PENDING',
@@ -1123,8 +1171,8 @@ function createSimulatedMissionById(id: string): Mission {
     communicationLogs: [
       {
         id: `log-${Date.now() - 1800000}`,
-        senderId: 'usr-mgr-01',
-        senderName: 'Trần Đình Trọng (Quản lý)',
+        senderId: 'manager',
+        senderName: 'manager',
         senderRole: 'MANAGER',
         type: 'DISPATCH',
         content: `Đã ban hành nhiệm vụ tới cả 3 vai trò (Inspector, Analyst, Technician). Hạn chót xác nhận: ${deadline.toLocaleString('vi-VN')}. Lời dặn: Chú ý gió giật tại khu vực đèo, kiểm tra kỹ khoảng cách pha-đất.`,
@@ -1239,7 +1287,7 @@ const normalizeMission = (value: unknown): Mission => {
     .map((m) => m.assignmentRole);
   const hasPostponed = requiredMembers.some((m) => m.responseStatus === 'POSTPONED');
 
-  return {
+  return cleanLegacyMockNames({
     id: stringValue(source['id']),
     missionCode: stringValue(pick(source, 'missionCode', 'code'), 'MISSION'),
     title: stringValue(pick(source, 'title', 'name'), 'Chưa đặt tên nhiệm vụ'),
@@ -1278,7 +1326,7 @@ const normalizeMission = (value: unknown): Mission => {
     pendingRoles,
     requiresReassignment: hasPostponed,
     targets: normalizeTargets(pick(source, 'missionTargets', 'targets', 'targetAssets')),
-  };
+  });
 };
 
 const normalizeTargets = (value: unknown): readonly MissionTarget[] =>

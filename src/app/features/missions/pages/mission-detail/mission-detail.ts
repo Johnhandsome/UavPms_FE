@@ -236,6 +236,87 @@ export class MissionDetail {
     });
   });
 
+  protected getMemberDisplayName(member: MissionAssignment): string {
+    const users = this.availableUsers();
+    if (member.userId && users.length > 0) {
+      const found = users.find((u) => u.id === member.userId || u.username === member.userId);
+      if (found) {
+        return found.fullName || found.username || found.email;
+      }
+    }
+    if (member.userName && users.length > 0) {
+      const found = users.find(
+        (u) => u.username.toLowerCase() === member.userName.toLowerCase() || u.id === member.userName,
+      );
+      if (found) {
+        return found.fullName || found.username || found.email;
+      }
+    }
+    const raw = member.userFullName || member.userName || '';
+    if (raw.includes('Nguyễn Văn An')) return 'inspector';
+    if (raw.includes('Lê Thị Mai')) return 'analyst';
+    if (raw.includes('Phạm Quốc Toàn')) return 'technician';
+    if (raw.includes('Trần Đình Trọng')) return 'manager';
+    return raw || (member.assignmentRole ? member.assignmentRole.toLowerCase() : 'Thành viên');
+  }
+
+  protected getAssignedPilotDisplayName(): string {
+    const m = this.mission();
+    if (!m) return 'Chưa phân công';
+    const users = this.availableUsers();
+    if (m.assignedToUserId && users.length > 0) {
+      const found = users.find((u) => u.id === m.assignedToUserId || u.username === m.assignedToUserId);
+      if (found) {
+        return found.fullName || found.username || found.email;
+      }
+    }
+    if (m.assignedToUsername && users.length > 0) {
+      const found = users.find(
+        (u) => u.username.toLowerCase() === m.assignedToUsername.toLowerCase() || u.id === m.assignedToUsername,
+      );
+      if (found) {
+        return found.fullName || found.username || found.email;
+      }
+    }
+    const raw = m.assignedToUsername || '';
+    if (raw.includes('Nguyễn Văn An')) return 'inspector';
+    return raw || 'inspector';
+  }
+
+  protected canAcceptMemberAssignment(member: MissionAssignment): boolean {
+    // In Manager view or acting in Manager role, Manager CANNOT accept assignments for assigned roles
+    if (this.activeRole() === 'MANAGER') return false;
+
+    const user = this.auth.user();
+    if (!user) return false;
+    const userRole = (user.role || '').toLowerCase();
+    if (userRole === 'manager' || userRole === 'supervisor') return false;
+
+    // Match by direct userId or username
+    if (member.userId && (user.id === member.userId || user.email === member.userId || (user as any).username === member.userId)) {
+      return true;
+    }
+
+    // Match by assigned role
+    const memberRole = (member.assignmentRole || '').toUpperCase();
+    if (memberRole === 'INSPECTOR' && (userRole.includes('inspector') || userRole.includes('pilot'))) return true;
+    if (memberRole === 'ANALYST' && userRole.includes('analyst')) return true;
+    if (memberRole === 'TECHNICIAN' && (userRole.includes('tech') || userRole.includes('maintenance'))) return true;
+
+    return false;
+  }
+
+  protected canPostponeMemberAssignment(member: MissionAssignment): boolean {
+    return this.canAcceptMemberAssignment(member);
+  }
+
+  protected canReassignMember(member: MissionAssignment): boolean {
+    if (member.responseStatus !== 'POSTPONED') return false;
+    const user = this.auth.user();
+    const userRole = (user?.role || '').toLowerCase();
+    return this.activeRole() === 'MANAGER' || userRole.includes('manager') || userRole.includes('admin') || userRole.includes('supervisor');
+  }
+
   protected readonly confirmationDeadlineDate = computed(() => {
     const m = this.mission();
     if (!m) return null;
@@ -1088,12 +1169,17 @@ export class MissionDetail {
   }
 
   protected acceptMemberAssignment(assignment: MissionAssignment): void {
+    if (!this.canAcceptMemberAssignment(assignment)) {
+      this.actionMessage.set('Vai trò Quản lý (Manager) không thể nhận việc thay cho vai trò được phân công.');
+      return;
+    }
+
     const currentMission = this.mission();
     if (!currentMission) return;
     this.actionBusy.set(true);
     this.actionMessage.set('');
 
-    const userName = assignment.userFullName || assignment.userName || 'Thành viên';
+    const userName = this.getMemberDisplayName(assignment);
     this.api
       .acceptAssignment(
         currentMission.id,
@@ -1129,6 +1215,10 @@ export class MissionDetail {
   }
 
   protected openPostponeModal(assignment?: MissionAssignment): void {
+    if (assignment && !this.canPostponeMemberAssignment(assignment)) {
+      this.actionMessage.set('Vai trò Quản lý (Manager) không thể báo hoãn thay cho vai trò được phân công.');
+      return;
+    }
     this.selectedAssignmentToPostpone.set(assignment ?? null);
     this.postponeReason.set('');
     this.showPostponeModal.set(true);
@@ -1147,8 +1237,7 @@ export class MissionDetail {
 
     const assignment = this.selectedAssignmentToPostpone();
     const role = assignment?.assignmentRole || 'INSPECTOR';
-    const userName =
-      assignment?.userFullName || assignment?.userName || currentMission.assignedToUsername || 'Thành viên đội ngũ';
+    const userName = assignment ? this.getMemberDisplayName(assignment) : 'Thành viên đội ngũ';
 
     this.api
       .postponeAssignment(currentMission.id, reason, assignment?.id, role, userName)

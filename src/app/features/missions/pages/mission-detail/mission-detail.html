@@ -73,7 +73,7 @@
             <div class="dispatch-status-meta">
               <div class="meta-item">
                 <span class="meta-label">Phi công phụ trách:</span>
-                <strong class="meta-value">{{ mission.assignedToUsername || 'Chưa phân công' }}</strong>
+                <strong class="meta-value">{{ getAssignedPilotDisplayName() }}</strong>
               </div>
               <div class="meta-item">
                 <span class="meta-label">Phương tiện UAV:</span>
@@ -164,7 +164,7 @@
                     </div>
 
                     <div class="member-name">
-                      {{ member.userFullName || member.userName || 'Thành viên' }}
+                      {{ getMemberDisplayName(member) }}
                     </div>
 
                     @if (member.responseReason) {
@@ -179,31 +179,35 @@
                     }
 
                     @if (member.responseStatus === 'POSTPONED') {
-                      <div class="member-reassign-action">
-                        <button
-                          type="button"
-                          class="btn-member-reassign"
-                          (click)="openReassignModal(member)">
-                          <span nz-icon nzType="swap"></span> Thay thế nhân sự
-                        </button>
-                      </div>
+                      @if (canReassignMember(member)) {
+                        <div class="member-reassign-action">
+                          <button
+                            type="button"
+                            class="btn-member-reassign"
+                            (click)="openReassignModal(member)">
+                            <span nz-icon nzType="swap"></span> Thay thế nhân sự
+                          </button>
+                        </div>
+                      }
                     } @else if (member.responseStatus !== 'ACCEPTED' && (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending')) {
-                      <div class="member-decision-actions">
-                        <button
-                          type="button"
-                          class="btn-member-accept"
-                          [disabled]="actionBusy()"
-                          (click)="acceptMemberAssignment(member)">
-                          <span nz-icon nzType="check"></span> Nhận việc
-                        </button>
-                        <button
-                          type="button"
-                          class="btn-member-postpone"
-                          [disabled]="actionBusy()"
-                          (click)="openPostponeModal(member)">
-                          <span nz-icon nzType="clock-circle"></span> Xin hoãn
-                        </button>
-                      </div>
+                      @if (canAcceptMemberAssignment(member)) {
+                        <div class="member-decision-actions">
+                          <button
+                            type="button"
+                            class="btn-member-accept"
+                            [disabled]="actionBusy()"
+                            (click)="acceptMemberAssignment(member)">
+                            <span nz-icon nzType="check"></span> Nhận việc
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-member-postpone"
+                            [disabled]="actionBusy()"
+                            (click)="openPostponeModal(member)">
+                            <span nz-icon nzType="clock-circle"></span> Xin hoãn
+                          </button>
+                        </div>
+                      }
                     }
                   </div>
                 }

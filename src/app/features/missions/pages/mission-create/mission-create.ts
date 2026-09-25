@@ -117,11 +117,11 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
     return this.users().map((u) => {
       const r = (u.role || '').toLowerCase();
       let roleType = 'Inspector';
-      if (r.includes('analyst') || r.includes('phân tích')) roleType = 'Analyst';
-      else if (r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì')) roleType = 'Technician';
+      if (r.includes('analyst') || r.includes('phân tích') || u.username.toLowerCase().includes('analyst')) roleType = 'Analyst';
+      else if (r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì') || u.username.toLowerCase().includes('technician')) roleType = 'Technician';
       return {
         id: u.id,
-        name: u.fullName || u.email,
+        name: u.fullName || u.username || u.email,
         role: roleType as any,
         region: 'Khu vực quản lý',
         availability: 'AVAILABLE' as const,
