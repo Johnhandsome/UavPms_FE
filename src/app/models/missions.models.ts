@@ -33,9 +33,69 @@ export interface MissionMemberAssignmentItem {
   readonly isRequired?: boolean;
 }
 
-export interface ReassignAssignmentRequest {
-  readonly newUserId: string;
-  readonly reassignReason?: string;
+export interface MissionAssignmentsOverview {
+  readonly missionId: string;
+  readonly totalRequiredCount: number;
+  readonly confirmedCount: number;
+  readonly allConfirmed: boolean;
+  readonly confirmationDeadline?: string | null;
+  readonly assignments: readonly MissionAssignment[];
+}
+
+export interface MissionBackendDetection {
+  readonly id: string;
+  readonly missionId: string;
+  readonly mediaId?: string;
+  readonly title: string;
+  readonly confidence: number;
+  readonly categoryCode?: string;
+  readonly severityWeight?: number;
+  readonly isEmergency?: boolean;
+  readonly status: 'Pending' | 'Approved' | 'Rejected' | string;
+  readonly boundingBox?: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly timestampSeconds?: number | null;
+  readonly timestampLabel?: string;
+  readonly frameIndex?: number | null;
+  readonly imageUrl?: string;
+  readonly sourceUrl?: string;
+  readonly assetId?: string;
+  readonly tower?: string;
+  readonly gps?: string;
+  readonly description?: string;
+  readonly detectedAt?: string;
+  readonly reviewedByUserId?: string | null;
+  readonly reviewedAt?: string | null;
+  readonly reviewNotes?: string | null;
+}
+
+export interface MissionBackendMaintenanceTask {
+  readonly id: string;
+  readonly missionId: string;
+  readonly detectionId?: string;
+  readonly title: string;
+  readonly priority: 'Urgent' | 'High' | 'Medium' | 'Low' | string;
+  readonly towerCode?: string;
+  readonly assetCode?: string;
+  readonly defectDescription?: string;
+  readonly suggestedAction?: string;
+  readonly status: 'Pending' | 'Approved' | 'InProgress' | 'Completed' | string;
+  readonly assignedTeam?: string;
+  readonly createdAt?: string;
+}
+
+export interface MissionBackendActivity {
+  readonly id: string;
+  readonly missionId: string;
+  readonly senderUserId?: string;
+  readonly senderName: string;
+  readonly senderRole: 'MANAGER' | 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' | 'SYSTEM' | string;
+  readonly content: string;
+  readonly timestamp: string;
 }
 
 export interface MissionAssignment {

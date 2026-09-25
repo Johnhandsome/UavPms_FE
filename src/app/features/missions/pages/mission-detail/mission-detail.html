@@ -416,8 +416,18 @@
               <div class="mission-item"><span>Ngày tạo</span><strong><span nz-icon nzType="calendar" aria-hidden="true"></span>{{ mission.createdAt ? (mission.createdAt | date:'dd/MM/yyyy') : 'N/A' }}</strong></div>
             </section>
 
+            @if (isLinearUploadBlocked()) {
+              <div class="linear-state-guard-alert" role="alert">
+                <span nz-icon nzType="lock" class="guard-icon"></span>
+                <div class="guard-content">
+                  <strong>Khóa Nạp Dữ Liệu UAV (Quy chuẩn Tuyến tính MF02)</strong>
+                  <p>Nhiệm vụ đang ở trạng thái <em>{{ statusLabel(mission.status) }}</em>. Theo quy trình kỹ thuật vận hành EVN, dữ liệu ảnh/video chỉ được phép tải lên sau khi cả 3 vai trò (Inspector, Analyst, Technician) đã xác nhận tiếp nhận và chuyến bay đã sẵn sàng/hoàn tất.</p>
+                </div>
+              </div>
+            }
+
             <!-- UPLOAD PREVIEW / DROPZONE -->
-            <section class="upload-card" aria-label="Tải media" (dragover)="onMediaDragOver($event)" (dragleave)="onMediaDragLeave($event)" (drop)="onMediaDrop($event)">
+            <section class="upload-card" [class.upload-disabled]="isLinearUploadBlocked()" aria-label="Tải media" (dragover)="!isLinearUploadBlocked() && onMediaDragOver($event)" (dragleave)="!isLinearUploadBlocked() && onMediaDragLeave($event)" (drop)="!isLinearUploadBlocked() && onMediaDrop($event)">
               <div class="upload-tabs" role="tablist" aria-label="Nguồn tải lên">
                 <button type="button" role="tab" class="active" aria-selected="true">Tải lên từ máy tính (UAV SD Card / Local)</button>
               </div>
@@ -482,21 +492,21 @@
                       <span nz-icon nzType="cloud-upload" aria-hidden="true"></span>
                       <span>Kéo thả thêm tệp vào đây hoặc</span>
                     </div>
-                    <label class="choose-file">
-                      <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.mp4,.avi,.mov,.webm,image/*,video/*" (change)="chooseMedia($event)" />
+                    <label class="choose-file" [class.disabled]="isLinearUploadBlocked()">
+                      <input type="file" [disabled]="isLinearUploadBlocked()" multiple accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.mp4,.avi,.mov,.webm,image/*,video/*" (change)="chooseMedia($event)" />
                       <span nz-icon nzType="plus"></span> Thêm tệp khác
                     </label>
                   </div>
                 </div>
               } @else {
                 <!-- EMPTY DROPZONE -->
-                <div class="drop-zone mission-drop-zone" [class.drag-active]="dragActive()" (dragover)="onMediaDragOver($event)" (dragleave)="onMediaDragLeave($event)" (drop)="onMediaDrop($event)">
-                  <div class="upload-icon"><span nz-icon nzType="cloud-upload" aria-hidden="true"></span></div>
-                  <h2>Kéo thả tệp Hình ảnh / Video UAV vào đây</h2>
-                  <p>Hỗ trợ định dạng: <strong>PNG, JPG, WEBP, MP4, AVI, MOV, WEBM</strong> (Tối đa 2GB/tệp)</p>
-                  <label class="choose-file">
-                    <input type="file" multiple accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.mp4,.avi,.mov,.webm,image/*,video/*" (change)="chooseMedia($event)" />
-                    <span>Chọn tệp từ máy tính</span>
+                <div class="drop-zone mission-drop-zone" [class.disabled]="isLinearUploadBlocked()" [class.drag-active]="dragActive()" (dragover)="!isLinearUploadBlocked() && onMediaDragOver($event)" (dragleave)="!isLinearUploadBlocked() && onMediaDragLeave($event)" (drop)="!isLinearUploadBlocked() && onMediaDrop($event)">
+                  <div class="upload-icon"><span nz-icon [nzType]="isLinearUploadBlocked() ? 'lock' : 'cloud-upload'" aria-hidden="true"></span></div>
+                  <h2>{{ isLinearUploadBlocked() ? 'Chức năng nạp dữ liệu tạm thời bị khóa' : 'Kéo thả tệp Hình ảnh / Video UAV vào đây' }}</h2>
+                  <p>{{ isLinearUploadBlocked() ? 'Chờ hoàn tất xác nhận nhiệm vụ và chuyến bay để kích hoạt cổng nạp dữ liệu' : 'Hỗ trợ định dạng: PNG, JPG, WEBP, MP4, AVI, MOV, WEBM (Tối đa 2GB/tệp)' }}</p>
+                  <label class="choose-file" [class.disabled]="isLinearUploadBlocked()">
+                    <input type="file" [disabled]="isLinearUploadBlocked()" multiple accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.mp4,.avi,.mov,.webm,image/*,video/*" (change)="chooseMedia($event)" />
+                    <span>{{ isLinearUploadBlocked() ? 'Chưa thể chọn tệp' : 'Chọn tệp từ máy tính' }}</span>
                   </label>
                 </div>
               }
@@ -532,7 +542,7 @@
               <strong><span nz-icon nzType="file-text" aria-hidden="true"></span>{{ mediaQueue().length }} file đã sẵn sàng</strong>
               <div>
                 <button type="button" class="ghost-action" (click)="mediaQueue.set([])">Xóa tất cả</button>
-                <button type="button" class="primary-action" [disabled]="uploadBusy() || !mediaQueue().length" (click)="uploadSelectedMedia()">
+                <button type="button" class="primary-action" [disabled]="uploadBusy() || !mediaQueue().length || isLinearUploadBlocked()" (click)="uploadSelectedMedia()">
                   {{ uploadBusy() ? 'Đang tải lên AI...' : 'Bắt đầu gửi AI phân tích' }} <span nz-icon nzType="arrow-right" aria-hidden="true"></span>
                 </button>
               </div>

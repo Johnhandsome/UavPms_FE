@@ -22,6 +22,10 @@ import { NzIconModule } from 'ng-zorro-antd/icon';
 import {
   Mission,
   MissionAssignment,
+  MissionAssignmentsOverview,
+  MissionBackendActivity,
+  MissionBackendDetection,
+  MissionBackendMaintenanceTask,
   MissionCommunicationLog,
   MissionOperationalRole,
 } from '../../../../models/missions.models';
@@ -246,6 +250,21 @@ export class MissionDetail {
     if (!deadline || !m) return false;
     const pending = m.status === 'PENDING_CONFIRMATION' || m.status === 'Assigned' || m.status === 'Pending';
     return pending && this.currentTime() > deadline.getTime();
+  });
+
+  protected readonly isLinearUploadBlocked = computed(() => {
+    const m = this.mission();
+    if (!m) return true;
+    const s = (m.status || '').toLowerCase();
+    return (
+      s === 'draft' ||
+      s === 'pendingacceptance' ||
+      s === 'pending_confirmation' ||
+      s === 'pending' ||
+      s === 'postponed' ||
+      s === 'suspended' ||
+      s === 'cancelled'
+    );
   });
 
   protected readonly deadlineTimeRemaining = computed(() => {
@@ -515,7 +534,10 @@ export class MissionDetail {
             status: 'Operational',
             lastInspected: '—',
           })));
+          this.loadAssignmentsOverview(mission.id);
           this.loadDetections(mission.id);
+          this.loadMaintenanceTasks(mission.id);
+          this.loadActivities(mission.id);
         },
         error: (error: unknown) => this.error.set(this.errorMessage(error)),
       });
@@ -527,9 +549,17 @@ export class MissionDetail {
       return;
     }
     this.activeTab.set(tab);
+    const missionId = this.mission()?.id;
+    if (!missionId) return;
+
     if (tab === 'results' || tab === 'processing') {
-      const missionId = this.mission()?.id;
-      if (missionId) this.loadDetections(missionId);
+      this.loadDetections(missionId);
+    } else if (tab === 'maintenance') {
+      this.loadMaintenanceTasks(missionId);
+    } else if (tab === 'activity') {
+      this.loadActivities(missionId);
+    } else if (tab === 'overview') {
+      this.loadAssignmentsOverview(missionId);
     }
   }
 
@@ -815,6 +845,12 @@ export class MissionDetail {
   }
 
   protected uploadSelectedMedia(): void {
+    if (this.isLinearUploadBlocked()) {
+      this.uploadMessage.set(
+        '⛔ VÒNG ĐỜI TUYẾN TÍNH: Nhiệm vụ đang ở trạng thái dự thảo hoặc chờ các vai trò xác nhận tiếp nhận. Không thể nạp ảnh/video khi chưa bay.',
+      );
+      return;
+    }
     const media = this.mediaQueue();
     const missionId = this.mission()?.id;
     if (!media.length || !missionId) return;
@@ -854,7 +890,18 @@ export class MissionDetail {
         },
         error: (error: unknown) => {
           this.setQueueProgress('Upload lỗi', this.uploadProgress());
-          this.uploadMessage.set(this.errorMessage(error));
+          const msg = this.errorMessage(error);
+          if (
+            msg.includes('INVALID_MISSION_STATUS_FOR_UPLOAD') ||
+            msg.includes('dự thảo') ||
+            msg.includes('chờ các vai trò xác nhận')
+          ) {
+            this.uploadMessage.set(
+              '⛔ CHẶN TẢI MEDIA (Quy chuẩn Tuyến tính): Nhiệm vụ đang ở trạng thái dự thảo hoặc chờ xác nhận tiếp nhận. Vui lòng hoàn tất tiếp nhận 3 vai trò và thực hiện bay trước khi tải ảnh/video.',
+            );
+          } else {
+            this.uploadMessage.set(msg);
+          }
         },
       });
   }
@@ -932,23 +979,37 @@ export class MissionDetail {
 
     this.reviewBusy.set(true);
     this.resultMessage.set('');
-    this.assetApi
-      .reviewMissionDetection(missionId, selected.id, { decision, notes: this.reviewNotes() })
+    const backendStatus: 'Approved' | 'Rejected' = decision === 'Approved' ? 'Approved' : 'Rejected';
+
+    this.api
+      .reviewDetection(missionId, selected.id, {
+        status: backendStatus,
+        reviewNotes: this.reviewNotes(),
+      })
       .pipe(
         takeUntilDestroyed(this.destroyRef),
+        catchError(() =>
+          this.assetApi.reviewMissionDetection(missionId, selected.id, { decision, notes: this.reviewNotes() }),
+        ),
         finalize(() => this.reviewBusy.set(false)),
       )
       .subscribe({
-        next: (reviewed) => {
-          const fallbackStatus = decision === 'Approved' ? 'Approved' : 'Rejected';
-          const updated = reviewed
-            ? this.mapDetection(reviewed)
-            : { ...selected, status: fallbackStatus, notes: this.reviewNotes(), validatedAt: new Date().toISOString() };
+        next: () => {
+          const updated: MissionDetectionView = {
+            ...selected,
+            status: backendStatus,
+            notes: this.reviewNotes(),
+            validatedAt: new Date().toISOString(),
+          };
           this.selectedDetection.set(updated);
           this.detections.update((items) => items.map((item) => (item.id === updated.id ? updated : item)));
           this.resultMessage.set(
-            decision === 'Approved' ? 'Đã xác nhận khuyết tật.' : 'Đã từ chối phát hiện AI (nhận diện sai).',
+            decision === 'Approved'
+              ? 'Đã duyệt khuyết tật. Hệ thống tự động khấu trừ điểm sức khỏe tài sản và lập phiếu bảo trì!'
+              : 'Đã từ chối phát hiện AI (nhận diện sai).',
           );
+          // Auto reload maintenance tasks generated by backend
+          this.loadMaintenanceTasks(missionId);
         },
         error: (error: unknown) => this.resultMessage.set(this.errorMessage(error)),
       });
@@ -1327,20 +1388,42 @@ export class MissionDetail {
     if (!currentMission || !content) return;
 
     const role = this.activeRole();
-    const senderName = role === 'MANAGER'
-      ? (currentMission.managerUsername || 'Quản lý vận hành')
-      : (currentMission.assignedToUsername || 'Phi công phụ trách');
+    const senderName =
+      role === 'MANAGER'
+        ? currentMission.managerUsername || 'Quản lý vận hành'
+        : currentMission.assignedToUsername || 'Phi công phụ trách';
 
     this.actionBusy.set(true);
     this.api
-      .sendCommunication(currentMission.id, content, role, senderName)
+      .addMissionActivity(currentMission.id, content, role)
       .pipe(
         takeUntilDestroyed(this.destroyRef),
+        catchError(() => this.api.sendCommunication(currentMission.id, content, role, senderName)),
         finalize(() => this.actionBusy.set(false)),
       )
       .subscribe({
-        next: (updated) => {
-          this.mission.set(updated);
+        next: (res) => {
+          if (res && typeof res === 'object' && 'id' in res && 'targets' in res) {
+            this.mission.set(res as Mission);
+          } else {
+            const newLog: MissionCommunicationLog = {
+              id: `log-${Date.now()}`,
+              senderId: this.auth.user()?.id || 'usr-me',
+              senderName,
+              senderRole: role,
+              type: 'MESSAGE',
+              content,
+              timestamp: new Date().toISOString(),
+            };
+            this.mission.update((curr) =>
+              curr
+                ? {
+                    ...curr,
+                    communicationLogs: [newLog, ...(curr.communicationLogs ?? [])],
+                  }
+                : null,
+            );
+          }
           this.chatMessage.set('');
           this.notificationsStore.upsert({
             id: `notif-${Date.now()}`,
@@ -1348,12 +1431,12 @@ export class MissionDetail {
             body: content,
             type: 'MISSION_COMMUNICATION',
             referenceType: 'MISSION',
-            referenceId: updated.id,
+            referenceId: currentMission.id,
             createdAt: new Date().toISOString(),
             isRead: false,
           });
           this.realtime.broadcastMissionEvent({
-            missionId: updated.id,
+            missionId: currentMission.id,
             type: 'COMMUNICATION',
             actorRole: role,
             actorName: senderName,
@@ -1430,13 +1513,41 @@ export class MissionDetail {
     return this.isVideoDetection(detection) ? detection.videoDurationLabel : detection.timestampLabel;
   }
 
+  private loadAssignmentsOverview(missionId: string): void {
+    this.api
+      .getAssignmentsOverview(missionId)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        catchError(() => of(null)),
+      )
+      .subscribe({
+        next: (overview) => {
+          if (!overview) return;
+          this.mission.update((curr) => {
+            if (!curr) return null;
+            return {
+              ...curr,
+              totalRequiredCount: overview.totalRequiredCount,
+              confirmedCount: overview.confirmedCount,
+              allConfirmed: overview.allConfirmed,
+              confirmationProgress:
+                overview.totalRequiredCount > 0 ? overview.confirmedCount / overview.totalRequiredCount : 0,
+              confirmationDeadline: overview.confirmationDeadline || curr.confirmationDeadline,
+              status: overview.allConfirmed ? 'CONFIRMED' : curr.status,
+              team: overview.assignments && overview.assignments.length > 0 ? overview.assignments : curr.team,
+            };
+          });
+        },
+      });
+  }
+
   private loadDetections(missionId: string): void {
     this.detectionsLoading.set(true);
-    this.assetApi
+    this.api
       .getMissionDetections(missionId)
       .pipe(
         takeUntilDestroyed(this.destroyRef),
-        catchError(() => of([])),
+        catchError(() => this.assetApi.getMissionDetections(missionId).pipe(catchError(() => of([])))),
         finalize(() => this.detectionsLoading.set(false)),
       )
       .subscribe({
@@ -1454,40 +1565,128 @@ export class MissionDetail {
       });
   }
 
-  private mapDetection(item: MissionAiDetection): MissionDetectionView {
+  private loadMaintenanceTasks(missionId: string): void {
+    this.api
+      .getMissionMaintenanceTasks(missionId)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        catchError(() => of([])),
+      )
+      .subscribe({
+        next: (tasks) => {
+          const mapped: MissionMaintenanceTask[] = tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            priority: (t.priority === 'Urgent' || t.priority === 'High' || t.priority === 'Medium' || t.priority === 'Scheduled'
+              ? t.priority
+              : t.priority === 'Low'
+              ? 'Scheduled'
+              : 'Medium') as MissionMaintenanceTask['priority'],
+            towerCode: t.towerCode || 'Cột 042 (Néo)',
+            assetCode: t.assetCode || 'INS-220KV-042',
+            defectDescription: t.defectDescription || 'Khuyết tật xác nhận bởi AI & Analyst',
+            suggestedAction: t.suggestedAction || 'Bảo dưỡng / Thay thế thiết bị',
+            status: (t.status === 'Approved' || t.status === 'InProgress' || t.status === 'Completed'
+              ? t.status
+              : 'Pending') as MissionMaintenanceTask['status'],
+            assignedTeam: t.assignedTeam || 'Đội Truyền tải / Bảo dưỡng EVN',
+          }));
+          this.maintenanceTasks.set(mapped);
+        },
+        error: () => this.maintenanceTasks.set([]),
+      });
+  }
+
+  private loadActivities(missionId: string): void {
+    this.api
+      .getMissionActivities(missionId)
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        catchError(() => of([])),
+      )
+      .subscribe({
+        next: (activities) => {
+          if (!activities || !activities.length) return;
+          const logs: MissionCommunicationLog[] = activities.map((a) => ({
+            id: a.id,
+            senderId: a.senderUserId || 'user',
+            senderName: a.senderName,
+            senderRole: (a.senderRole?.toUpperCase() === 'MANAGER'
+              ? 'MANAGER'
+              : a.senderRole?.toUpperCase() === 'INSPECTOR'
+              ? 'INSPECTOR'
+              : 'SYSTEM') as 'MANAGER' | 'INSPECTOR' | 'SYSTEM',
+            type: 'MESSAGE',
+            content: a.content,
+            timestamp: a.timestamp,
+          }));
+          this.mission.update((curr) => {
+            if (!curr) return null;
+            const existing = curr.communicationLogs ?? [];
+            const merged = [...logs];
+            for (const l of existing) {
+              if (
+                !merged.some(
+                  (m) =>
+                    m.id === l.id ||
+                    (m.content === l.content &&
+                      Math.abs(new Date(m.timestamp).getTime() - new Date(l.timestamp).getTime()) < 3000),
+                )
+              ) {
+                merged.push(l);
+              }
+            }
+            merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            return { ...curr, communicationLogs: merged };
+          });
+        },
+      });
+  }
+
+  private mapDetection(item: MissionBackendDetection | MissionAiDetection): MissionDetectionView {
+    const tsSec = item.timestampSeconds ?? null;
+    const durSec =
+      ('videoDurationSeconds' in item ? item.videoDurationSeconds : null) ?? (tsSec ? Math.max(60, tsSec + 10) : 60);
+    const tsLabel =
+      'timestampLabel' in item && item.timestampLabel
+        ? item.timestampLabel
+        : tsSec !== null
+        ? this.formatTime(tsSec)
+        : item.frameIndex !== null && item.frameIndex !== undefined
+        ? `Frame ${item.frameIndex}`
+        : 'N/A';
+
+    const rawNotes = 'reviewNotes' in item ? item.reviewNotes : 'analystNotes' in item ? item.analystNotes : '';
+    const rawValidatedAt = 'reviewedAt' in item ? item.reviewedAt : 'validatedAt' in item ? item.validatedAt : '';
+
     return {
       id: item.id,
-      mediaId: item.mediaId,
+      mediaId: item.mediaId || '',
       title: item.title,
-      confidence: item.confidence,
-      timestampLabel:
-        item.timestampSeconds === null
-          ? item.frameIndex === null
-            ? 'N/A'
-            : `Frame ${item.frameIndex}`
-          : this.formatTime(item.timestampSeconds),
-      timestampSeconds: item.timestampSeconds,
-      frameIndex: item.frameIndex,
-      videoDurationLabel: item.videoDurationSeconds ? this.formatTime(item.videoDurationSeconds) : 'N/A',
+      confidence: Math.round(item.confidence <= 1 && item.confidence > 0 ? item.confidence * 100 : item.confidence),
+      timestampLabel: tsLabel,
+      timestampSeconds: tsSec,
+      frameIndex: item.frameIndex ?? null,
+      videoDurationLabel: this.formatTime(durSec),
       status: item.status,
-      mediaStatus: item.mediaStatus,
-      categoryCode: item.categoryCode,
-      severityWeight: item.severityWeight,
-      isEmergency: item.isEmergency,
-      aiSource: item.aiSource,
-      mediaType: item.mediaType,
+      mediaStatus: ('mediaStatus' in item ? item.mediaStatus : 'Analyzed') || 'Analyzed',
+      categoryCode: item.categoryCode || 'DEFECT',
+      severityWeight: item.severityWeight ?? 1,
+      isEmergency: item.isEmergency ?? false,
+      aiSource: ('aiSource' in item ? item.aiSource : 'SERVER') || 'SERVER',
+      mediaType: ('mediaType' in item ? item.mediaType : tsSec !== null ? 'video' : 'image') || 'image',
       sourceUrl: item.sourceUrl,
       imageUrl: item.imageUrl || item.sourceUrl || '/images/defect-insulator-crack.png',
       cropImageUrl: item.imageUrl || item.sourceUrl || '/images/defect-insulator-crack.png',
       boundingBox: item.boundingBox,
       missionId: item.missionId,
       assetId: item.assetId || 'Chưa liên kết',
-      tower: 'Cột 042 (TOW-220KV-042)',
-      gps: '20°58\'14.2"N 105°48\'22.6"E',
+      tower: ('tower' in item && item.tower ? item.tower : 'Cột 042 (TOW-220KV-042)'),
+      gps: ('gps' in item && item.gps ? item.gps : '20°58\'14.2"N 105°48\'22.6"E'),
       description: item.description || 'Không có mô tả từ máy chủ AI.',
-      notes: item.analystNotes,
-      detectedAt: item.detectedAt,
-      validatedAt: item.validatedAt,
+      notes: rawNotes || '',
+      detectedAt: item.detectedAt || new Date().toISOString(),
+      validatedAt: rawValidatedAt || '',
     };
   }
 

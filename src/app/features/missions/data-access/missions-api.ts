@@ -6,6 +6,10 @@ import { unwrapApiData } from '../../../models/api.models';
 import {
   Mission,
   MissionAssignment,
+  MissionAssignmentsOverview,
+  MissionBackendActivity,
+  MissionBackendDetection,
+  MissionBackendMaintenanceTask,
   MissionCommunicationLog,
   MissionCreateRequest,
   MissionMutationRequest,
@@ -701,6 +705,74 @@ export class MissionsApi {
 
   delete(id: string) {
     return this.http.delete<unknown>(`${this.url}/${id}`);
+  }
+
+  getAssignmentsOverview(missionId: string): Observable<MissionAssignmentsOverview | null> {
+    return this.http
+      .get<unknown>(`${this.url}/${missionId}/assignments`)
+      .pipe(
+        map((res) => unwrapApiData(res) as MissionAssignmentsOverview),
+        catchError(() => of(null))
+      );
+  }
+
+  getMissionDetections(
+    missionId: string,
+    filters?: { status?: string; mediaType?: string; isEmergency?: boolean }
+  ): Observable<readonly MissionBackendDetection[]> {
+    let params = new HttpParams();
+    if (filters?.status) params = params.set('status', filters.status);
+    if (filters?.mediaType) params = params.set('mediaType', filters.mediaType);
+    if (filters?.isEmergency !== undefined) params = params.set('isEmergency', filters.isEmergency);
+    return this.http
+      .get<unknown>(`${this.url}/${missionId}/detections`, { params })
+      .pipe(
+        map((res) => {
+          const data = unwrapApiData(res);
+          return Array.isArray(data) ? (data as readonly MissionBackendDetection[]) : [];
+        }),
+        catchError(() => of([]))
+      );
+  }
+
+  reviewDetection(
+    missionId: string,
+    detectionId: string,
+    payload: { status: 'Approved' | 'Rejected'; reviewNotes?: string; overrideSeverity?: string }
+  ): Observable<unknown> {
+    return this.http
+      .post<unknown>(`${this.url}/${missionId}/detections/${detectionId}/review`, payload)
+      .pipe(
+        catchError(() => this.http.put<unknown>(`${this.url}/${missionId}/detections/${detectionId}/review`, payload))
+      );
+  }
+
+  getMissionMaintenanceTasks(missionId: string): Observable<readonly MissionBackendMaintenanceTask[]> {
+    return this.http
+      .get<unknown>(`${this.url}/${missionId}/maintenance-tasks`)
+      .pipe(
+        map((res) => {
+          const data = unwrapApiData(res);
+          return Array.isArray(data) ? (data as readonly MissionBackendMaintenanceTask[]) : [];
+        }),
+        catchError(() => of([]))
+      );
+  }
+
+  getMissionActivities(missionId: string): Observable<readonly MissionBackendActivity[]> {
+    return this.http
+      .get<unknown>(`${this.url}/${missionId}/activities`)
+      .pipe(
+        map((res) => {
+          const data = unwrapApiData(res);
+          return Array.isArray(data) ? (data as readonly MissionBackendActivity[]) : [];
+        }),
+        catchError(() => of([]))
+      );
+  }
+
+  addMissionActivity(missionId: string, content: string, senderRole = 'INSPECTOR'): Observable<unknown> {
+    return this.http.post<unknown>(`${this.url}/${missionId}/activities`, { content, senderRole });
   }
 }
 
