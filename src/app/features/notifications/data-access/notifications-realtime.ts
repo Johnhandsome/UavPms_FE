@@ -176,6 +176,12 @@ export class NotificationsRealtime {
       emitLifecycle(type, payload);
     });
 
+    connection.on('ReceiveMissionEvent', (payload: unknown) => {
+      const data = record(payload);
+      const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
+      emitLifecycle(type, payload);
+    });
+
     connection.on('MissionConfirmed', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
     connection.on('MissionDispatched', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
     connection.on('MissionSuspended', (payload: unknown) => emitLifecycle('SUSPENDED', payload));

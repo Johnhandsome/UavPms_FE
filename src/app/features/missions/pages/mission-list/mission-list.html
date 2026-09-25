@@ -13,6 +13,14 @@
   @if (error()) { <div class="mission-alert" role="alert">{{ error() }} <button type="button" (click)="error.set('')">Dong</button></div> }
 
   <section class="mission-filters" aria-label="Bo loc nhiem vu">
+    <div class="mission-scope-tabs" role="tablist" aria-label="Phạm vi nhiệm vụ">
+      <button type="button" class="mission-scope-tab" [class.active]="scope() === 'my'" (click)="setScope('my')">
+        <span nz-icon nzType="user"></span> Được giao cho tôi
+      </button>
+      <button type="button" class="mission-scope-tab" [class.active]="scope() === 'all'" (click)="setScope('all')">
+        <span nz-icon nzType="appstore"></span> Tất cả nhiệm vụ
+      </button>
+    </div>
     <label class="mission-search"><span nz-icon nzType="search"></span><input type="search" placeholder="Tìm kiếm nhiệm vụ, mã NV..." [value]="search()" (input)="updateSearch($any($event.target).value)" (keydown.enter)="applyFilters()" /></label>
     <label><span>Trạng thái</span><select [value]="status()" (change)="status.set($any($event.target).value); applyFilters()"><option value="">Tất cả</option>@for (item of statuses; track item) { <option [value]="item">{{ statusLabel(item) }}</option> }</select></label>
     <button type="button" class="mission-filter-btn" (click)="applyFilters()"><span nz-icon nzType="filter"></span>Lọc</button>

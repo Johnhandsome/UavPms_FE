@@ -1,6 +1,6 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { map } from 'rxjs';
+import { catchError, map } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { unwrapApiData } from '../../../models/api.models';
 import { AppNotification } from '../../../models/notification.models';
@@ -13,11 +13,14 @@ export class NotificationsApi {
   private readonly baseUrl = `${environment.apiBaseUrl}/notifications`;
 
   getHistory(userId?: string) {
-    let params = new HttpParams();
+    let params = new HttpParams().set('limit', '50');
     if (userId) params = params.set('userId', userId);
     return this.http
       .get<unknown>(`${this.baseUrl}/history`, { params })
-      .pipe(map((response) => normalizeArray(unwrapApiData(response)).map((item) => normalizeNotification(item))));
+      .pipe(
+        catchError(() => this.http.get<unknown>(this.baseUrl, { params })),
+        map((response) => normalizeArray(unwrapApiData(response)).map((item) => normalizeNotification(item)))
+      );
   }
 
   getById(id: string) {

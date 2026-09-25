@@ -276,8 +276,9 @@ public class NotificationsController : ControllerBase
 
 ## 4. Bảng Kiểm Tra Chấp Thuận (Acceptance Criteria)
 
-- [ ] `GET /api/v1/missions/my` trả về `200 OK` cùng danh sách nhiệm vụ được gán cho user hiện tại.
-- [ ] Khi Manager tạo chuyến bay (`POST /api/v1/missions`), trong Database bảng `Notifications` tự động có 3 records tương ứng cho `inspector`, `analyst`, `technician`.
-- [ ] `GET /api/v1/notifications/history?userId={userId}` trả về danh sách thông báo đầy đủ kèm trạng thái `isRead`.
-- [ ] Khi đăng nhập bằng `inspector`, popup chuông thông báo hiển thị thông báo `[MF02 ĐIỀU PHỐI]` và nút "Đến trang nhiệm vụ" chuyển hướng trực tiếp tới `/missions/{id}/inspector`.
-- [ ] Trang `/missions` hiển thị đầy đủ danh sách nhiệm vụ với số liệu thống kê (Stats strip).
+- [x] `GET /api/v1/missions/my` trả về `200 OK` cùng danh sách nhiệm vụ được gán cho user hiện tại (Hỗ trợ `AllAuthenticatedRoles`).
+- [x] Khi Manager tạo chuyến bay (`POST /api/v1/missions`), trong Database bảng `Notifications` tự động có các records tương ứng cho nhân sự được phân công (`inspector`, `analyst`, `technician`).
+- [x] `GET /api/v1/notifications` và `GET /api/v1/notifications/history` trả về danh sách thông báo đầy đủ kèm trạng thái `isRead`.
+- [x] Khi đăng nhập bằng `inspector`, popup chuông thông báo hiển thị thông báo `[MF02 ĐIỀU PHỐI]` và nút "Đến trang nhiệm vụ" chuyển hướng trực tiếp tới `/missions/{id}/inspector`.
+- [x] Trang `/missions` hiển thị đầy đủ danh sách nhiệm vụ với tab phạm vi "Được giao cho tôi" / "Tất cả nhiệm vụ" và số liệu thống kê (Stats strip).
+- [x] Realtime SignalR bắn sự kiện `ReceiveNotification`, `NotificationReceived` và `ReceiveMissionEvent` trực tiếp tới các tài khoản liên quan.
