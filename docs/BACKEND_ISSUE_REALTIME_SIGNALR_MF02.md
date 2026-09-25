@@ -115,15 +115,16 @@ Khi các API REST thực hiện thay đổi trạng thái nhiệm vụ, Backend 
 
 | Tên Event SignalR | Mục đích | Đối tượng nhận | Dữ liệu Payload gửi kèm |
 | :--- | :--- | :--- | :--- |
-| `MissionDispatched` | Quản lý vừa tạo & ban hành nhiệm vụ mới | `Clients.User(inspectorUserId)` & `Clients.All` | `{ missionId, type: "DISPATCHED", status: "PENDING_CONFIRMATION", actorRole: "MANAGER", actorName, confirmationDeadline, managerInstructions, timestamp }` |
-| `MissionConfirmed` | Phi công xác nhận tiếp nhận sẵn sàng bay | `Clients.Group($"mission_{id}")` | `{ missionId, type: "CONFIRMED", status: "CONFIRMED", actorRole: "INSPECTOR", actorName, reason, timestamp }` |
-| `MissionPostponed` | Phi công xin hoãn / dời lịch | `Clients.Group($"mission_{id}")` | `{ missionId, type: "POSTPONED", status: "POSTPONED", reason, actorRole: "INSPECTOR", actorName, timestamp }` |
+| `MissionDispatched` | Quản lý vừa tạo & ban hành nhiệm vụ mới | `Clients.Users(assignedUserIds)` & `Clients.Group($"mission_{id}")` | `{ missionId, type: "DISPATCHED", status: "PENDING_CONFIRMATION", actorRole: "MANAGER", actorName, confirmationDeadline, managerInstructions, assignments: [...], timestamp }` |
+| `MissionConfirmed` | Một thành viên (Inspector / Analyst / Technician) xác nhận sẵn sàng | `Clients.Group($"mission_{id}")` | `{ missionId, assignmentId, type: "CONFIRMED", status: "CONFIRMED_PARTIAL" \| "CONFIRMED", actorRole: "INSPECTOR" \| "ANALYST" \| "TECHNICIAN", actorId, actorName, allConfirmed: bool, pendingRoles: string[], reason, timestamp }` |
+| `MissionPostponed` | Một thành viên xin hoãn / dời lịch | `Clients.Group($"mission_{id}")` | `{ missionId, assignmentId, type: "POSTPONED", status: "POSTPONED", reason, actorRole: "INSPECTOR" \| "ANALYST" \| "TECHNICIAN", actorId, actorName, timestamp }` |
+| `MissionReassigned` | Quản lý điều phối nhân sự mới thay thế cho vai trò bị hoãn | `Clients.Group($"mission_{id}")` & `Clients.User(newUserId)` | `{ missionId, assignmentId, type: "REASSIGNED", actorRole: "MANAGER", replacedRole: string, oldUserId, newUserId, newUserName, timestamp }` |
 | `MissionSuspended` | Quản lý tạm đình chỉ bay khẩn cấp | `Clients.Group($"mission_{id}")` | `{ missionId, type: "SUSPENDED", status: "SUSPENDED", reason, actorRole: "MANAGER", actorName, timestamp }` |
 | `MissionResumed` | Quản lý dỡ lệnh tạm đình chỉ | `Clients.Group($"mission_{id}")` | `{ missionId, type: "RESUMED", status: "CONFIRMED", actorRole: "MANAGER", actorName, timestamp }` |
 | `MissionCancelled` | Quản lý hủy bỏ nhiệm vụ | `Clients.Group($"mission_{id}")` | `{ missionId, type: "CANCELLED", status: "Cancelled", reason, actorRole: "MANAGER", actorName, timestamp }` |
-| `MissionReminderSent` | Quản lý bấm gửi nhắc nhở khẩn cấp | `Clients.Group($"mission_{id}")` & `Clients.User(inspectorId)` | `{ missionId, type: "REMINDER", reason, actorRole: "MANAGER", actorName, timestamp }` |
-| `MissionCommunicationReceived` | Tin nhắn trao đổi 2 chiều giữa Manager & Inspector | `Clients.Group($"mission_{id}")` | `{ missionId, type: "COMMUNICATION", actorRole, actorName, message, timestamp, log: { id, senderId, senderName, senderRole, type: "MESSAGE", content, timestamp } }` |
-| `MissionConfirmationOverdue` | Tự động quá hạn tiếp nhận từ Background Job | `Clients.Group($"mission_{id}")` & `Clients.User(managerId)` | `{ missionId, type: "OVERDUE", timestamp }` |
+| `MissionReminderSent` | Quản lý bấm gửi nhắc nhở khẩn cấp tới vai trò chưa xác nhận | `Clients.Group($"mission_{id}")` & `Clients.User(targetUserId)` | `{ missionId, type: "REMINDER", targetRole, reason, actorRole: "MANAGER", actorName, timestamp }` |
+| `MissionCommunicationReceived` | Tin nhắn trao đổi đa chiều giữa Manager, Inspector, Analyst, Technician | `Clients.Group($"mission_{id}")` | `{ missionId, type: "COMMUNICATION", actorRole, actorName, message, timestamp, log: { id, senderId, senderName, senderRole, type: "MESSAGE", content, timestamp } }` |
+| `MissionConfirmationOverdue` | Tự động quá hạn tiếp nhận từ Background Job | `Clients.Group($"mission_{id}")` & `Clients.User(managerId)` | `{ missionId, type: "OVERDUE", overdueRoles: string[], timestamp }` |
 | `MissionLifecycleEvent` | **Event tổng hợp** chứa mọi sự kiện trên | `Clients.Group($"mission_{id}")` | `MissionLifecycleEventDto` |
 
 ---
@@ -136,8 +137,9 @@ namespace UavPms.Application.DTOs.Realtime
     public class MissionLifecycleEventDto
     {
         public string MissionId { get; set; } = string.Empty;
+        public string? AssignmentId { get; set; }
         
-        // Giá trị: "DISPATCHED" | "CONFIRMED" | "POSTPONED" | "SUSPENDED" | "RESUMED" | "CANCELLED" | "REMINDER" | "COMMUNICATION" | "OVERDUE"
+        // Giá trị: "DISPATCHED" | "CONFIRMED" | "POSTPONED" | "REASSIGNED" | "SUSPENDED" | "RESUMED" | "CANCELLED" | "REMINDER" | "COMMUNICATION" | "OVERDUE"
         public string Type { get; set; } = string.Empty;
         
         // Giá trị: "PENDING_CONFIRMATION" | "CONFIRMED" | "POSTPONED" | "SUSPENDED" | "Cancelled"
@@ -151,8 +153,14 @@ namespace UavPms.Application.DTOs.Realtime
         public string? ActorId { get; set; }
         public string? ActorName { get; set; }
         
-        // "MANAGER" | "INSPECTOR" | "SYSTEM"
+        // "MANAGER" | "INSPECTOR" | "ANALYST" | "TECHNICIAN" | "SYSTEM"
         public string? ActorRole { get; set; }
+        
+        // Danh sách các vai trò còn chưa xác nhận
+        public List<string>? PendingRoles { get; set; }
+        
+        // True nếu 100% 3 vai trò bắt buộc đã Accept
+        public bool? AllConfirmed { get; set; }
         
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
         
@@ -164,7 +172,7 @@ namespace UavPms.Application.DTOs.Realtime
         public string Id { get; set; } = Guid.NewGuid().ToString();
         public string SenderId { get; set; } = string.Empty;
         public string SenderName { get; set; } = string.Empty;
-        public string SenderRole { get; set; } = "SYSTEM"; // "MANAGER" | "INSPECTOR" | "SYSTEM"
+        public string SenderRole { get; set; } = "SYSTEM"; // "MANAGER" | "INSPECTOR" | "ANALYST" | "TECHNICIAN" | "SYSTEM"
         public string Type { get; set; } = "MESSAGE";       // "MESSAGE" | "DISPATCH" | "CONFIRM" | "POSTPONE" | "SUSPEND" | "RESUME" | "CANCEL" | "REMINDER"
         public string Content { get; set; } = string.Empty;
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
@@ -176,35 +184,41 @@ namespace UavPms.Application.DTOs.Realtime
 
 ## 5. Tích hợp tại Service / Controller Backend
 
-Ví dụ khi gọi API Xác nhận nhiệm vụ `POST /api/missions/{id}/confirm`:
+Ví dụ khi gọi API Xác nhận nhiệm vụ `POST /api/v2/missions/{id}/confirm` (hoặc `POST /api/v2/missions/{id}/assignments/{assignmentId}/accept`):
 
 ```csharp
 [HttpPost("{id}/confirm")]
 public async Task<IActionResult> ConfirmMission(string id, [FromBody] ConfirmMissionRequest request)
 {
-    var mission = await _missionService.ConfirmAsync(id, request, CurrentUserId);
+    // Cập nhật phân công của User hiện tại (Inspector, Analyst hoặc Technician)
+    var result = await _missionService.ConfirmAssignmentAsync(id, CurrentUserId, request);
+    var mission = result.Mission;
+    var currentAssignment = result.UpdatedAssignment; // Role: INSPECTOR | ANALYST | TECHNICIAN
     
     // 1. Tạo Notification cho Manager
     await _notificationService.CreateAsync(new CreateNotificationDto
     {
         UserId = mission.ManagerId,
-        Title = $"[MF02] Phi công đã tiếp nhận nhiệm vụ {mission.MissionCode}",
-        Body = $"Phi công {mission.AssignedToUsername} đã xác nhận tiếp nhận nhiệm vụ bay.",
+        Title = $"[MF02] {currentAssignment.Role} đã xác nhận nhiệm vụ {mission.MissionCode}",
+        Body = $"{currentAssignment.UserName} ({currentAssignment.Role}) đã xác nhận sẵn sàng tiếp nhận nhiệm vụ.",
         Type = "MISSION_CONFIRMED",
         ReferenceId = mission.Id,
         ReferenceType = "MISSION"
     });
 
-    // 2. Broadcast SignalR Real-time Event
+    // 2. Broadcast SignalR Real-time Event tới nhóm phòng của nhiệm vụ
     var eventDto = new MissionLifecycleEventDto
     {
         MissionId = mission.Id,
+        AssignmentId = currentAssignment.Id,
         Type = "CONFIRMED",
-        Status = "CONFIRMED",
+        Status = mission.Status, // Chỉ là "CONFIRMED" nếu 100% 3 vai trò đã chấp nhận, ngược lại "PENDING_CONFIRMATION"
         ActorId = CurrentUserId,
-        ActorName = mission.AssignedToUsername,
-        ActorRole = "INSPECTOR",
-        Reason = request.Reason ?? "Phi công đã xác nhận sẵn sàng bay.",
+        ActorName = currentAssignment.UserName,
+        ActorRole = currentAssignment.Role, // "INSPECTOR" | "ANALYST" | "TECHNICIAN"
+        AllConfirmed = result.IsAllRolesConfirmed,
+        PendingRoles = result.PendingRoles,
+        Reason = request.Reason ?? "Thành viên đã xác nhận sẵn sàng thực hiện nhiệm vụ.",
         Timestamp = DateTime.UtcNow
     };
 
@@ -216,9 +230,10 @@ public async Task<IActionResult> ConfirmMission(string id, [FromBody] ConfirmMis
 ```
 
 Tương tự cho các endpoints:
+- `POST /api/missions/{id}/assignments/{assignmentId}/postpone` (Phát `MissionPostponed` kèm vai trò và lý do hoãn)
+- `POST /api/missions/{id}/assignments/{assignmentId}/reassign` (Phát `MissionReassigned` khi Manager gán người mới)
 - `POST /api/missions/{id}/suspend` (Phát `MissionSuspended`)
 - `POST /api/missions/{id}/resume` (Phát `MissionResumed`)
-- `POST /api/missions/{id}/postpone` (Phát `MissionPostponed`)
 - `POST /api/missions/{id}/cancel` (Phát `MissionCancelled`)
 - `POST /api/missions/{id}/remind` (Phát `MissionReminderSent`)
 - `POST /api/missions/{id}/communications` (Phát `MissionCommunicationReceived`)

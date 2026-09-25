@@ -315,10 +315,10 @@ Never reduce UAV health to one ambiguous colored dot.
 MF01 should demonstrate:
 - assessment workspace;
 - GIS/scope;
-- personnel readiness;
+- personnel readiness (kiểm tra pool ứng viên cho đủ tối thiểu 3 vai trò: Inspector, Analyst, Technician theo 5 tiêu chí bắt buộc: Eligible AND Active AND Within Region/Scope AND Available during proposed time AND Has required role/qualification);
 - UAV readiness;
 - technical inspection;
-- overall readiness;
+- overall readiness (chỉ READY khi cả 4 nhóm đạt PASS);
 - validity/expiry;
 - clear handoff to MF02.
 
@@ -329,11 +329,14 @@ Use `MF01_v2.0_FE_PreMission_Readiness.md` as behavior source.
 MF02 should demonstrate:
 - READY assessment context;
 - scope review;
-- final personnel/UAV selection;
-- mission form;
+- final personnel assignment cho đủ tối thiểu 3 vai trò (Inspector, Analyst, Technician, mỗi role ≥ 1 người);
+- UAV selection;
+- mission form & confirmation deadline;
 - final revalidation;
-- create result;
-- Inspector Accept/Postpone.
+- multi-role dispatch & notifications;
+- Multi-Role Confirmation Console (Accept / Postpone cho từng role Inspector, Analyst, Technician);
+- Aggregate Confirmation Status (Mission chỉ chuyển CONFIRMED khi đủ 100% 3 role Accept);
+- Postpone & Reassignment workflow.
 
 Use `MF02_v2.0_FE_Create_Assign_Mission.md` as behavior source.
 
