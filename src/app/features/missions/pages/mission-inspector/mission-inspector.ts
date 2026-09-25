@@ -15,9 +15,10 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import * as L from 'leaflet';
 import { NzIconModule } from 'ng-zorro-antd/icon';
-import { Mission } from '../../../../models/missions.models';
+import { Mission, MissionAssignment, MissionOperationalRole } from '../../../../models/missions.models';
 import { NotificationsRealtime } from '../../../notifications/data-access/notifications-realtime';
 import { MissionsApi } from '../../data-access/missions-api';
+import { Auth } from '../../../../core/auth/auth';
 
 @Component({
   selector: 'app-mission-inspector',
@@ -30,6 +31,7 @@ import { MissionsApi } from '../../data-access/missions-api';
 export class MissionInspector {
   private readonly api = inject(MissionsApi);
   private readonly realtime = inject(NotificationsRealtime);
+  private readonly auth = inject(Auth);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
   private readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('inspectorMap');
@@ -40,6 +42,7 @@ export class MissionInspector {
   private routeLine: L.Polyline | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
+  protected readonly currentUser = this.auth.user;
   protected readonly loading = signal(true);
   protected readonly error = signal('');
   protected readonly mission = signal<Mission | null>(null);
@@ -50,6 +53,45 @@ export class MissionInspector {
   protected readonly currentTime = signal(Date.now());
   protected readonly selectedTargetId = signal('');
   protected readonly mapType = signal<'satellite' | 'streets'>('satellite');
+
+  // Multi-Role Assignment for the current logged in user
+  protected readonly myAssignment = computed<MissionAssignment | null>(() => {
+    const m = this.mission();
+    const u = this.currentUser();
+    if (!m || !m.team || m.team.length === 0) return null;
+    if (u?.id) {
+      const match = m.team.find((a) => a.userId === u.id);
+      if (match) return match;
+    }
+    const uRole = (u?.role || '').toLowerCase();
+    if (uRole.includes('analyst') || uRole.includes('phân tích')) {
+      return m.team.find((a) => a.assignmentRole === 'ANALYST') || null;
+    }
+    if (uRole.includes('tech') || uRole.includes('kỹ thuật') || uRole.includes('bảo trì')) {
+      return m.team.find((a) => a.assignmentRole === 'TECHNICIAN') || null;
+    }
+    return m.team.find((a) => a.assignmentRole === 'INSPECTOR') || m.team[0] || null;
+  });
+
+  protected readonly currentRoleTitle = computed<string>(() => {
+    const a = this.myAssignment();
+    if (a) {
+      if (a.assignmentRole === 'ANALYST') return 'Chuyên viên phân tích ảnh (Analyst)';
+      if (a.assignmentRole === 'TECHNICIAN') return 'Kỹ thuật viên bảo trì lưới (Technician)';
+      return 'Phi công phụ trách (Inspector / Pilot)';
+    }
+    return 'Thành viên đội bay (Inspector)';
+  });
+
+  protected readonly isMyAssignmentAccepted = computed<boolean>(() => {
+    const a = this.myAssignment();
+    return a ? a.responseStatus === 'ACCEPTED' : this.mission()?.status === 'CONFIRMED';
+  });
+
+  protected readonly isMyAssignmentPostponed = computed<boolean>(() => {
+    const a = this.myAssignment();
+    return a ? a.responseStatus === 'POSTPONED' : this.mission()?.status === 'POSTPONED';
+  });
 
   protected readonly confirmationDeadlineDate = computed(() => {
     const m = this.mission();
@@ -163,22 +205,33 @@ export class MissionInspector {
     if (!m || this.actionBusy()) return;
     this.actionBusy.set(true);
 
-    this.api.confirmMission(m.id, 'Phi công xác nhận sẵn sàng bay khảo sát lưới điện.')
+    const assign = this.myAssignment();
+    const role: MissionOperationalRole = assign?.assignmentRole || 'INSPECTOR';
+    const note = `${this.currentRoleTitle()} xác nhận sẵn sàng tham gia thực hiện nhiệm vụ.`;
+
+    this.api.acceptAssignment(m.id, assign?.id, note, role)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (updated) => {
           this.mission.set(updated);
           this.actionBusy.set(false);
-          this.actionMessage.set('Đã xác nhận tiếp nhận nhiệm vụ thành công. Trạng thái: Sẵn sàng bay.');
+          const total = updated.totalRequiredCount || 3;
+          const conf = updated.confirmedCount || 1;
+          this.actionMessage.set(`Đã xác nhận tiếp nhận vai trò ${role} thành công! (${conf}/${total} vai trò đã xác nhận).`);
 
           // Broadcast real-time event to Manager console & Mission lists
           this.realtime.broadcastMissionEvent({
             missionId: updated.id,
             type: 'CONFIRMED',
-            status: 'CONFIRMED',
-            actorRole: 'INSPECTOR',
-            actorName: updated.assignedToUsername || 'Phi công phụ trách',
-            reason: 'Phi công xác nhận sẵn sàng bay khảo sát lưới điện.',
+            status: updated.status,
+            actorRole: role,
+            assignmentId: assign?.id,
+            actorName: this.currentUser()?.fullName || updated.assignedToUsername || 'Thành viên đội bay',
+            reason: note,
+            allConfirmed: updated.allConfirmed,
+            confirmedCount: conf,
+            totalRequiredCount: total,
+            pendingRoles: updated.pendingRoles,
             timestamp: new Date().toISOString(),
           });
         },
@@ -204,14 +257,17 @@ export class MissionInspector {
     if (!m || !reason || this.actionBusy()) return;
 
     this.actionBusy.set(true);
-    this.api.postponeMission(m.id, reason)
+    const assign = this.myAssignment();
+    const role: MissionOperationalRole = assign?.assignmentRole || 'INSPECTOR';
+
+    this.api.postponeAssignment(m.id, reason, assign?.id, role)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (updated) => {
           this.mission.set(updated);
           this.actionBusy.set(false);
           this.showPostponeModal.set(false);
-          this.actionMessage.set('Đã gửi yêu cầu dời lịch / hoãn nhiệm vụ tới Quản lý vận hành.');
+          this.actionMessage.set(`Đã gửi yêu cầu dời lịch / hoãn tiếp nhận vai trò ${role} tới Quản lý vận hành.`);
 
           // Broadcast real-time event to Manager console
           this.realtime.broadcastMissionEvent({
@@ -219,8 +275,9 @@ export class MissionInspector {
             type: 'POSTPONED',
             status: 'POSTPONED',
             reason,
-            actorRole: 'INSPECTOR',
-            actorName: updated.assignedToUsername || 'Phi công phụ trách',
+            actorRole: role,
+            assignmentId: assign?.id,
+            actorName: this.currentUser()?.fullName || updated.assignedToUsername || 'Thành viên đội bay',
             timestamp: new Date().toISOString(),
           });
         },

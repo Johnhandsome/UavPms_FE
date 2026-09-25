@@ -20,7 +20,7 @@
             <span nz-icon nzType="arrow-left"></span> Danh sách nhiệm vụ
           </a>
           <span class="breadcrumb-separator">/</span>
-          <span class="breadcrumb-current">PHIẾU TIẾP NHẬN PHI CÔNG</span>
+          <span class="breadcrumb-current">PHIẾU TIẾP NHẬN: {{ currentRoleTitle() }}</span>
         </div>
         <div class="title-row">
           <h1>Nhiệm vụ: {{ mission.missionCode }}</h1>
@@ -46,7 +46,7 @@
     }
 
     <!-- ACCEPTANCE HERO BANNER -->
-    @if (mission.status === 'PENDING_CONFIRMATION' || mission.status === 'Assigned' || mission.status === 'Pending') {
+    @if (!isMyAssignmentAccepted() && mission.status !== 'Cancelled' && mission.status !== 'SUSPENDED') {
       <section class="acceptance-hero-banner pending" aria-label="Yêu cầu tiếp nhận nhiệm vụ">
         <div class="hero-content">
           <div class="hero-icon">
@@ -54,13 +54,16 @@
           </div>
           <div class="hero-details">
             <div class="hero-title-row">
-              <h2>YÊU CẦU TIẾP NHẬN NHIỆM VỤ TỪ QUẢN LÝ</h2>
+              <h2>YÊU CẦU TIẾP NHẬN VAI TRÒ: {{ currentRoleTitle() }}</h2>
               @if (confirmationDeadlineDate(); as deadline) {
                 <span class="deadline-tag" [class.overdue]="isDeadlineOverdue()">
                   <span nz-icon nzType="field-time"></span>
                   Hạn chót: {{ deadlineRemainingText() }} (Trước {{ deadline | date:'HH:mm dd/MM/yyyy' }})
                 </span>
               }
+            </div>
+            <div style="margin: 4px 0 8px; font-size: 11px; color: #0284c7; font-weight: 600;">
+              Tiến độ xác nhận toàn đội: {{ mission.confirmedCount || 0 }}/{{ mission.totalRequiredCount || 3 }} vai trò đã chấp thuận (Bắt buộc đủ 3 vai trò Inspector, Analyst, Technician để bay).
             </div>
             @if (mission.managerInstructions) {
               <div class="instructions-quote">
@@ -81,7 +84,7 @@
             class="btn-accept-mission"
             [disabled]="actionBusy()"
             (click)="confirmMission()">
-            <span nz-icon nzType="check-circle" nzTheme="fill"></span> Xác nhận tiếp nhận nhiệm vụ
+            <span nz-icon nzType="check-circle" nzTheme="fill"></span> Xác nhận tiếp nhận vai trò {{ myAssignment()?.assignmentRole || 'INSPECTOR' }}
           </button>
           <button
             type="button"
@@ -92,21 +95,26 @@
           </button>
         </div>
       </section>
-    } @else if (mission.status === 'CONFIRMED') {
+    } @else if (isMyAssignmentAccepted()) {
       <section class="acceptance-hero-banner confirmed" aria-label="Đã tiếp nhận nhiệm vụ">
         <div class="hero-content">
           <div class="hero-icon confirmed">
             <span nz-icon nzType="check-circle" nzTheme="fill"></span>
           </div>
           <div class="hero-details">
-            <h2>BẠN ĐÃ TIẾP NHẬN NHIỆM VỤ NÀY</h2>
+            <h2>BẠN ĐÃ TIẾP NHẬN VAI TRÒ NÀY ({{ currentRoleTitle() }})</h2>
             <p>
-              Nhiệm vụ đã sẵn sàng bay khảo sát. Hãy hoàn thành bảng kiểm tra BIST UAV và có mặt tại điểm cất cánh đúng giờ theo kế hoạch.
+              @if (mission.status === 'CONFIRMED') {
+                100% các vai trò trong đội bay đã xác nhận! Nhiệm vụ chính thức sẵn sàng cất cánh theo lịch.
+              } @else {
+                Bạn đã xác nhận sẵn sàng. Đang chờ các thành viên còn lại trong đội bay xác nhận (Đã xác nhận: {{ mission.confirmedCount || 1 }}/{{ mission.totalRequiredCount || 3 }} vai trò).
+              }
             </p>
           </div>
         </div>
         <div class="hero-status-pill">
-          <span nz-icon nzType="safety-certificate" nzTheme="fill"></span> Sẵn sàng cất cánh
+          <span nz-icon nzType="safety-certificate" nzTheme="fill"></span>
+          {{ mission.status === 'CONFIRMED' ? 'Sẵn sàng cất cánh' : 'Chờ hoàn tất đội bay' }}
         </div>
       </section>
     } @else if (mission.status === 'POSTPONED') {
@@ -117,7 +125,7 @@
           </div>
           <div class="hero-details">
             <h2>YÊU CẦU HOÃN ĐANG CHỜ QUẢN LÝ XỬ LÝ</h2>
-            <p>Lý do từ bạn: <em>"{{ mission.postponeReason || 'Lý do phát sinh.' }}"</em></p>
+            <p>Lý do từ bạn: <em>"{{ myAssignment()?.responseReason || mission.postponeReason || 'Lý do phát sinh.' }}"</em></p>
           </div>
         </div>
       </section>

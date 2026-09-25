@@ -96,6 +96,8 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
     scheduledAt: ['', Validators.required],
     plannedEnd: ['', Validators.required],
     inspectorId: ['', Validators.required],
+    analystId: ['', Validators.required],
+    technicianId: ['', Validators.required],
     droneId: ['', Validators.required],
     confirmationDeadline: ['', Validators.required],
     managerInstructions: [''],
@@ -105,22 +107,74 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
     description: [''],
   });
 
-  // Derived candidate lists
-  protected readonly eligiblePersonnel = computed<readonly PersonnelCandidate[]>(() => {
+  // Base personnel list from assessment or fallback
+  protected readonly allPersonnelCandidates = computed<readonly PersonnelCandidate[]>(() => {
     const ass = this.assessmentData();
     if (ass && ass.personnelCandidates && ass.personnelCandidates.length > 0) {
-      return ass.personnelCandidates.filter((p) => p.eligibility === 'ELIGIBLE');
+      return ass.personnelCandidates;
     }
     // Fallback to active users
-    return this.users().map((u) => ({
-      id: u.id,
-      name: u.fullName || u.email,
-      role: (u.role as any) || 'Pilot / Inspector',
-      region: 'Khu vực quản lý',
-      availability: 'AVAILABLE' as const,
-      eligibility: 'ELIGIBLE' as const,
-      reason: 'Đủ chứng chỉ chuyên môn vận hành bay UAV',
-    }));
+    return this.users().map((u) => {
+      const r = (u.role || '').toLowerCase();
+      let roleType = 'Inspector';
+      if (r.includes('analyst') || r.includes('phân tích')) roleType = 'Analyst';
+      else if (r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì')) roleType = 'Technician';
+      return {
+        id: u.id,
+        name: u.fullName || u.email,
+        role: roleType as any,
+        region: 'Khu vực quản lý',
+        availability: 'AVAILABLE' as const,
+        eligibility: 'ELIGIBLE' as const,
+        overallEligibility: true,
+        isActive: true,
+        isEligible: true,
+        isWithinScope: true,
+        isAvailable: true,
+        reason: 'Đủ điều kiện tiêu chuẩn vận hành',
+      };
+    });
+  });
+
+  // Derived candidate lists partitioned by the 3 required roles satisfying 5 AND criteria
+  protected readonly eligibleInspectors = computed<readonly PersonnelCandidate[]>(() => {
+    return this.allPersonnelCandidates().filter((p) => {
+      const r = (p.role || '').toLowerCase();
+      const isInspector = r.includes('inspector') || r.includes('pilot') || r.includes('phi công');
+      const isEligible = p.overallEligibility !== undefined
+        ? Boolean(p.overallEligibility && p.overallEligibility !== 'INELIGIBLE')
+        : p.eligibility === 'ELIGIBLE';
+      return isInspector && isEligible;
+    });
+  });
+
+  protected readonly eligibleAnalysts = computed<readonly PersonnelCandidate[]>(() => {
+    return this.allPersonnelCandidates().filter((p) => {
+      const r = (p.role || '').toLowerCase();
+      const isAnalyst = r.includes('analyst') || r.includes('phân tích') || r.includes('dữ liệu');
+      const isEligible = p.overallEligibility !== undefined
+        ? Boolean(p.overallEligibility && p.overallEligibility !== 'INELIGIBLE')
+        : p.eligibility === 'ELIGIBLE';
+      return isAnalyst && isEligible;
+    });
+  });
+
+  protected readonly eligibleTechnicians = computed<readonly PersonnelCandidate[]>(() => {
+    return this.allPersonnelCandidates().filter((p) => {
+      const r = (p.role || '').toLowerCase();
+      const isTech = r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì');
+      const isEligible = p.overallEligibility !== undefined
+        ? Boolean(p.overallEligibility && p.overallEligibility !== 'INELIGIBLE')
+        : p.eligibility === 'ELIGIBLE';
+      return isTech && isEligible;
+    });
+  });
+
+  // Backward compatible general personnel list
+  protected readonly eligiblePersonnel = computed<readonly PersonnelCandidate[]>(() => {
+    return this.allPersonnelCandidates().filter((p) =>
+      p.overallEligibility !== false && p.overallEligibility !== 'INELIGIBLE' && p.eligibility === 'ELIGIBLE',
+    );
   });
 
   protected readonly eligibleDrones = computed<readonly UavCandidate[]>(() => {
@@ -142,7 +196,17 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
 
   protected readonly selectedInspector = computed(() => {
     const id = this.form.controls.inspectorId.value;
-    return this.eligiblePersonnel().find((p) => p.id === id);
+    return this.allPersonnelCandidates().find((p) => p.id === id);
+  });
+
+  protected readonly selectedAnalyst = computed(() => {
+    const id = this.form.controls.analystId.value;
+    return this.allPersonnelCandidates().find((p) => p.id === id);
+  });
+
+  protected readonly selectedTechnician = computed(() => {
+    const id = this.form.controls.technicianId.value;
+    return this.allPersonnelCandidates().find((p) => p.id === id);
   });
 
   protected readonly selectedDrone = computed(() => {
@@ -190,10 +254,7 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
       .subscribe({
         next: (users) => {
           this.users.set(users);
-          if (!this.form.controls.inspectorId.value && users.length > 0) {
-            const best = this.eligiblePersonnel()[0]?.id || users[0].id;
-            this.form.controls.inspectorId.setValue(best);
-          }
+          this.autoSelectCandidatesIfEmpty();
         },
         error: () => {},
       });
@@ -211,6 +272,22 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
         },
         error: () => {},
       });
+  }
+
+  private autoSelectCandidatesIfEmpty(): void {
+    const c = this.form.controls;
+    if (!c.inspectorId.value) {
+      const ins = this.eligibleInspectors()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('pilot'))?.id;
+      if (ins) c.inspectorId.setValue(ins);
+    }
+    if (!c.analystId.value) {
+      const ana = this.eligibleAnalysts()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('analyst'))?.id;
+      if (ana) c.analystId.setValue(ana);
+    }
+    if (!c.technicianId.value) {
+      const tec = this.eligibleTechnicians()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('tech'))?.id;
+      if (tec) c.technicianId.setValue(tec);
+    }
   }
 
   private loadAssessment(id: string): void {
@@ -239,12 +316,20 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
           // Calculate default deadline (6 hours before start, or safely placed before start)
           const deadlineStr = this.computeDeadlineString(startStr, '6h');
 
-          // Pick best inspector & drone candidates with fallbacks
+          // Pick best inspector, analyst, technician, drone candidates
           const bestInspector =
-            ass.personnelCandidates?.find((p) => p.eligibility === 'ELIGIBLE')?.id ||
-            ass.personnelCandidates?.[0]?.id ||
-            this.eligiblePersonnel()[0]?.id ||
-            this.users()[0]?.id ||
+            this.eligibleInspectors()[0]?.id ||
+            ass.personnelCandidates?.find((p) => (p.role || '').toLowerCase().includes('inspector'))?.id ||
+            '';
+
+          const bestAnalyst =
+            this.eligibleAnalysts()[0]?.id ||
+            ass.personnelCandidates?.find((p) => (p.role || '').toLowerCase().includes('analyst'))?.id ||
+            '';
+
+          const bestTechnician =
+            this.eligibleTechnicians()[0]?.id ||
+            ass.personnelCandidates?.find((p) => (p.role || '').toLowerCase().includes('tech'))?.id ||
             '';
 
           const bestDrone =
@@ -260,10 +345,15 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
             plannedEnd: endStr,
             confirmationDeadline: deadlineStr,
             inspectorId: bestInspector,
+            analystId: bestAnalyst,
+            technicianId: bestTechnician,
             droneId: bestDrone,
-            managerInstructions: `Yêu cầu đội bay kiểm tra kỹ khoảng cách an toàn hành lang lưới điện (${this.corridorBufferMeters()}m), lưu ý tốc độ gió giật bề mặt và hoàn thành xác nhận trước hạn chót.`,
-            description: `Nhiệm vụ bay kiểm tra được kế thừa từ Đánh giá tiền nhiệm vụ ${ass.assessmentCode}. Phạm vi: ${ass.assetCount} vị trí cột điện.`,
+            managerInstructions: `Yêu cầu đội bay và kỹ thuật kiểm tra kỹ khoảng cách an toàn hành lang lưới điện (${this.corridorBufferMeters()}m), phối hợp phân tích ảnh và hoàn thành xác nhận trước hạn chót.`,
+            description: `Nhiệm vụ bay kiểm tra được kế thừa từ Đánh giá tiền nhiệm vụ ${ass.assessmentCode}. Phạm vi: ${ass.assetCount} vị trí cột điện. Yêu cầu đủ 3 vai trò: Inspector, Analyst, Technician.`,
           });
+
+          // Fallback auto selection if some fields empty
+          this.autoSelectCandidatesIfEmpty();
 
           setTimeout(() => {
             this.initMapPreview();
@@ -556,12 +646,14 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
       const c = this.form.controls;
       if (c.name.invalid) missing.push('Tên đợt bay (tối thiểu 5 ký tự)');
       if (c.inspectorId.invalid) missing.push('Phi công phụ trách (Inspector)');
+      if (c.analystId.invalid) missing.push('Chuyên viên phân tích (Analyst)');
+      if (c.technicianId.invalid) missing.push('Kỹ thuật viên bảo trì (Technician)');
       if (c.droneId.invalid) missing.push('Phương tiện UAV');
       if (c.scheduledAt.invalid) missing.push('Thời điểm bắt đầu bay');
       if (c.plannedEnd.invalid) missing.push('Thời điểm kết thúc');
       if (c.confirmationDeadline.invalid) missing.push('Hạn chót xác nhận');
 
-      this.error.set(`Vui lòng hoàn thiện các trường bắt buộc: ${missing.join(', ')}.`);
+      this.error.set(`Vui lòng hoàn thiện các trường bắt buộc (yêu cầu đủ 3 vai trò): ${missing.join(', ')}.`);
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
@@ -583,7 +675,7 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
     }
 
     if (deadlineTime >= startTime) {
-      this.error.set('Hạn chót Inspector xác nhận (Confirmation Deadline) phải diễn ra trước thời điểm bắt đầu bay.');
+      this.error.set('Hạn chót các thành viên xác nhận (Confirmation Deadline) phải diễn ra trước thời điểm bắt đầu bay.');
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
@@ -611,6 +703,11 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
       confirmationDeadline: f.confirmationDeadline,
       managerInstructions: f.managerInstructions,
       sourceAssessmentId: ass?.id,
+      assignments: [
+        { userId: f.inspectorId, role: 'INSPECTOR', isRequired: true },
+        { userId: f.analystId, role: 'ANALYST', isRequired: true },
+        { userId: f.technicianId, role: 'TECHNICIAN', isRequired: true },
+      ],
     };
 
     this.api
@@ -620,19 +717,28 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
         next: (mission) => {
           this.busy.set(false);
 
-          // Dispatch Notification to Header Notifications Store
+          // Dispatch Notification to Header Notifications Store for ALL 3 roles
           if (f.notifyInApp) {
-            const inspectorName = this.selectedInspector()?.name || 'Phi công UAV';
-            this.notificationsStore.upsert({
-              id: `notif-${Date.now()}`,
-              userId: f.inspectorId,
-              type: 'MISSION_DISPATCH',
-              referenceType: 'MISSION',
-              referenceId: mission.id,
-              title: `Phân công nhiệm vụ bay: ${mission.missionCode}`,
-              body: `Bạn được phân công phụ trách nhiệm vụ "${mission.title}". Hạn chót xác nhận: ${new Date(f.confirmationDeadline).toLocaleTimeString('vi-VN')} ${new Date(f.confirmationDeadline).toLocaleDateString('vi-VN')}.`,
-              createdAt: new Date().toISOString(),
-              isRead: false,
+            const roleTargets = [
+              { userId: f.inspectorId, roleLabel: 'Phi công (Inspector)' },
+              { userId: f.analystId, roleLabel: 'Chuyên viên phân tích (Analyst)' },
+              { userId: f.technicianId, roleLabel: 'Kỹ thuật viên bảo trì (Technician)' },
+            ];
+
+            const deadlineFormatted = `${new Date(f.confirmationDeadline).toLocaleTimeString('vi-VN')} ${new Date(f.confirmationDeadline).toLocaleDateString('vi-VN')}`;
+
+            roleTargets.forEach((item, index) => {
+              this.notificationsStore.upsert({
+                id: `notif-${Date.now()}-${index}`,
+                userId: item.userId,
+                type: 'MISSION_DISPATCH',
+                referenceType: 'MISSION',
+                referenceId: mission.id,
+                title: `Phân công nhiệm vụ: ${mission.missionCode} (${item.roleLabel})`,
+                body: `Bạn được chỉ định vai trò ${item.roleLabel} cho nhiệm vụ "${mission.title}". Vui lòng kiểm tra và xác nhận trước ${deadlineFormatted}.`,
+                createdAt: new Date().toISOString(),
+                isRead: false,
+              });
             });
           }
 
@@ -645,6 +751,10 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
             actorName: this.currentUser()?.fullName || 'Quản lý vận hành',
             managerInstructions: f.managerInstructions,
             confirmationDeadline: f.confirmationDeadline,
+            allConfirmed: false,
+            confirmedCount: 0,
+            totalRequiredCount: 3,
+            pendingRoles: ['INSPECTOR', 'ANALYST', 'TECHNICIAN'],
             timestamp: new Date().toISOString(),
           });
 

@@ -191,34 +191,120 @@
             }
           </div>
 
-          <!-- Phân công Inspector -->
-          <div class="form-field-row">
-            <label class="field-label">
-              Thanh tra viên / Phi công phụ trách (Inspector / Pilot) <span class="req">*</span>
-            </label>
-            <select class="evn-select" formControlName="inspectorId">
-              <option value="" disabled>-- Chọn phi công phụ trách nhiệm vụ --</option>
-              @for (p of eligiblePersonnel(); track p.id) {
-                <option [value]="p.id">
-                  {{ p.name }} — {{ p.role }} ({{ p.availability === 'AVAILABLE' ? 'Sẵn sàng' : p.availability }})
-                </option>
-              }
-            </select>
-            @if (form.controls.inspectorId.touched && form.controls.inspectorId.invalid) {
-              <span class="field-error">Vui lòng chỉ định phi công phụ trách.</span>
-            }
+          <!-- Phân công 3 Vai trò (Inspector, Analyst, Technician) -->
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 10px; margin-bottom: 10px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+              <strong style="font-size: 11.5px; color: #1e3a8a;">
+                <span nz-icon nzType="team" style="color: #0284c7; margin-right: 4px;"></span>
+                Nhân sự thực thi (Bắt buộc đủ 3 vai trò đạt chuẩn 5 tiêu chí):
+              </strong>
+              <span class="evn-status pass" style="font-size: 9.5px;">3 ROLES MANDATORY</span>
+            </div>
 
-            @if (selectedInspector(); as ins) {
-              <div class="candidate-brief-card">
-                <span nz-icon nzType="user" style="color: #0284c7; font-size: 16px;"></span>
-                <div style="flex: 1; font-size: 11px;">
-                  <strong style="color: #0c4a6e;">{{ ins.name }}</strong>
-                  <span style="color: #64748b; margin-left: 6px;">Vai trò: {{ ins.role }}</span>
-                  <p style="margin: 2px 0 0; color: #334155; font-size: 10px;">{{ ins.reason }}</p>
+            <!-- Role 1: Inspector -->
+            <div class="form-field-row" style="margin-bottom: 8px;">
+              <label class="field-label" style="font-weight: 600; color: #0c4a6e;">
+                1. Phi công phụ trách (Inspector / Pilot) <span class="req">*</span>
+              </label>
+              <select class="evn-select" formControlName="inspectorId">
+                <option value="" disabled>-- Chọn phi công phụ trách bay --</option>
+                @for (p of eligibleInspectors(); track p.id) {
+                  <option [value]="p.id">
+                    {{ p.name }} — {{ p.role }} ({{ p.availability === 'AVAILABLE' ? 'Sẵn sàng' : p.availability }})
+                  </option>
+                }
+                @if (eligibleInspectors().length === 0) {
+                  @for (p of allPersonnelCandidates(); track p.id) {
+                    <option [value]="p.id">{{ p.name }} — {{ p.role }}</option>
+                  }
+                }
+              </select>
+              @if (form.controls.inspectorId.touched && form.controls.inspectorId.invalid) {
+                <span class="field-error">Vui lòng chỉ định phi công phụ trách.</span>
+              }
+
+              @if (selectedInspector(); as ins) {
+                <div class="candidate-brief-card" style="margin-top: 4px; padding: 4px 8px; border-left: 3px solid #0284c7;">
+                  <span nz-icon nzType="user" style="color: #0284c7; font-size: 14px;"></span>
+                  <div style="flex: 1; font-size: 10.5px;">
+                    <strong style="color: #0c4a6e;">{{ ins.name }}</strong>
+                    <span style="color: #64748b; margin-left: 6px;">{{ ins.role }}</span>
+                    <p style="margin: 1px 0 0; color: #475569; font-size: 9.5px;">{{ ins.reason }}</p>
+                  </div>
+                  <span class="evn-status pass" style="font-size: 9px;">ĐẠT 5 TIÊU CHÍ</span>
                 </div>
-                <span class="evn-status pass">ELIGIBLE</span>
-              </div>
-            }
+              }
+            </div>
+
+            <!-- Role 2: Analyst -->
+            <div class="form-field-row" style="margin-bottom: 8px;">
+              <label class="field-label" style="font-weight: 600; color: #4c1d95;">
+                2. Chuyên viên phân tích ảnh &amp; dữ liệu (Analyst) <span class="req">*</span>
+              </label>
+              <select class="evn-select" formControlName="analystId">
+                <option value="" disabled>-- Chọn chuyên viên phân tích ảnh/khuyết tật --</option>
+                @for (p of eligibleAnalysts(); track p.id) {
+                  <option [value]="p.id">
+                    {{ p.name }} — {{ p.role }} ({{ p.availability === 'AVAILABLE' ? 'Sẵn sàng' : p.availability }})
+                  </option>
+                }
+                @if (eligibleAnalysts().length === 0) {
+                  @for (p of allPersonnelCandidates(); track p.id) {
+                    <option [value]="p.id">{{ p.name }} — {{ p.role }}</option>
+                  }
+                }
+              </select>
+              @if (form.controls.analystId.touched && form.controls.analystId.invalid) {
+                <span class="field-error">Vui lòng chỉ định chuyên viên phân tích ảnh.</span>
+              }
+
+              @if (selectedAnalyst(); as ana) {
+                <div class="candidate-brief-card" style="margin-top: 4px; padding: 4px 8px; border-left: 3px solid #7c3aed;">
+                  <span nz-icon nzType="fund" style="color: #7c3aed; font-size: 14px;"></span>
+                  <div style="flex: 1; font-size: 10.5px;">
+                    <strong style="color: #4c1d95;">{{ ana.name }}</strong>
+                    <span style="color: #64748b; margin-left: 6px;">{{ ana.role }}</span>
+                    <p style="margin: 1px 0 0; color: #475569; font-size: 9.5px;">{{ ana.reason }}</p>
+                  </div>
+                  <span class="evn-status pass" style="font-size: 9px;">ĐẠT 5 TIÊU CHÍ</span>
+                </div>
+              }
+            </div>
+
+            <!-- Role 3: Technician -->
+            <div class="form-field-row">
+              <label class="field-label" style="font-weight: 600; color: #14532d;">
+                3. Kỹ thuật viên bảo trì lưới (Technician) <span class="req">*</span>
+              </label>
+              <select class="evn-select" formControlName="technicianId">
+                <option value="" disabled>-- Chọn kỹ thuật viên phụ trách an toàn lưới --</option>
+                @for (p of eligibleTechnicians(); track p.id) {
+                  <option [value]="p.id">
+                    {{ p.name }} — {{ p.role }} ({{ p.availability === 'AVAILABLE' ? 'Sẵn sàng' : p.availability }})
+                  </option>
+                }
+                @if (eligibleTechnicians().length === 0) {
+                  @for (p of allPersonnelCandidates(); track p.id) {
+                    <option [value]="p.id">{{ p.name }} — {{ p.role }}</option>
+                  }
+                }
+              </select>
+              @if (form.controls.technicianId.touched && form.controls.technicianId.invalid) {
+                <span class="field-error">Vui lòng chỉ định kỹ thuật viên bảo trì.</span>
+              }
+
+              @if (selectedTechnician(); as tec) {
+                <div class="candidate-brief-card" style="margin-top: 4px; padding: 4px 8px; border-left: 3px solid #16a34a;">
+                  <span nz-icon nzType="tool" style="color: #16a34a; font-size: 14px;"></span>
+                  <div style="flex: 1; font-size: 10.5px;">
+                    <strong style="color: #14532d;">{{ tec.name }}</strong>
+                    <span style="color: #64748b; margin-left: 6px;">{{ tec.role }}</span>
+                    <p style="margin: 1px 0 0; color: #475569; font-size: 9.5px;">{{ tec.reason }}</p>
+                  </div>
+                  <span class="evn-status pass" style="font-size: 9px;">ĐẠT 5 TIÊU CHÍ</span>
+                </div>
+              }
+            </div>
           </div>
 
           <!-- Phân công UAV -->
@@ -282,7 +368,7 @@
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
               <label class="field-label" style="margin: 0; color: #0c4a6e;">
                 <span nz-icon nzType="clock-circle" style="color: #d97706; margin-right: 4px;"></span>
-                <strong>Hạn chót Inspector phản hồi xác nhận (Confirmation Deadline) <span class="req">*</span></strong>
+                <strong>Hạn chót các thành viên phản hồi xác nhận (Confirmation Deadline) <span class="req">*</span></strong>
               </label>
               <span style="font-size: 10px; color: #d97706; font-weight: 700;">BẮT BUỘC TRƯỚC GIỜ BAY</span>
             </div>
@@ -344,7 +430,7 @@
 
             <p style="margin: 6px 0 0; font-size: 10px; color: #475569; line-height: 1.4;">
               <span nz-icon nzType="info-circle" style="color: #0284c7;"></span>
-              Nếu Inspector không phản hồi trước thời điểm này, hệ thống sẽ tự động kích hoạt cảnh báo <strong>QUÁ HẠN (OVERDUE)</strong> để Quản lý kịp thời gửi nhắc nhở hoặc phân công phi công thay thế.
+              Cả 3 vai trò (Inspector, Analyst, Technician) đều phải xác nhận chấp thuận trước thời điểm này. Nếu bất kỳ ai báo hoãn hoặc quá hạn, hệ thống kích hoạt cảnh báo <strong>QUÁ HẠN (OVERDUE)</strong> để Quản lý kịp thời gửi nhắc nhở hoặc tái phân công.
             </p>
           </div>
 
@@ -402,7 +488,7 @@
     <footer class="workspace-footer" style="margin-top: 10px;">
       <div class="footer-left">
         <span style="font-size: 11px; color: #475569;">
-          Sau khi ban hành, nhiệm vụ chuyển sang trạng thái <strong>PENDING_CONFIRMATION</strong> và tự động gửi thông báo tới Inspector.
+          Sau khi ban hành, nhiệm vụ chuyển sang trạng thái <strong>PENDING_CONFIRMATION</strong> và tự động gửi thông báo tới cả 3 vai trò (Inspector, Analyst, Technician).
         </span>
       </div>
       <div class="footer-right">
@@ -419,7 +505,7 @@
           @if (busy()) {
             <span nz-icon nzType="loading"></span> Đang khởi tạo &amp; Ban hành...
           } @else {
-            <span nz-icon nzType="send"></span> Ban hành nhiệm vụ &amp; Gửi thông báo tới Inspector
+            <span nz-icon nzType="send"></span> Ban hành nhiệm vụ &amp; Gửi thông báo tới Đội bay (3 Roles)
           }
         </button>
       </div>
