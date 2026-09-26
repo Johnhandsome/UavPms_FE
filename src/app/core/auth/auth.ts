@@ -96,6 +96,12 @@ export class Auth {
     if (this.sessionExpiryTimer) clearTimeout(this.sessionExpiryTimer);
     this.sessionExpiryTimer = null;
     localStorage.removeItem(this.sessionKey);
+    // Clear per-session caches to prevent cross-user data contamination
+    // when switching accounts on the same browser/domain
+    localStorage.removeItem('uav_pms_missions_data_v2');
+    localStorage.removeItem('uav_pms_notifications_v1');
+    sessionStorage.removeItem('uav_pms_missions_data_v2');
+    sessionStorage.removeItem('uav_pms_notifications_v1');
     this.sessionState.set(null);
     this.refreshingState.set(false);
   }

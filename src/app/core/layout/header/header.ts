@@ -35,7 +35,11 @@ export class Header {
     if (!u) return 'HieuHV';
     return u.fullName || u.email?.split('@')[0] || 'HieuHV';
   });
-  protected readonly isInspector = computed(() => this.user()?.role === 'Inspector');
+  protected readonly isInspector = computed(() => ['inspector', 'pilot'].includes((this.user()?.role ?? '').toLowerCase()));
+  protected readonly isOperationalRole = computed(() => {
+    const role = (this.user()?.role ?? '').toLowerCase();
+    return ['inspector', 'pilot', 'analyst', 'technician', 'maintenancetechnician'].includes(role);
+  });
   protected readonly groupedNotifications = computed(() => {
     const list = this.notifications.filteredNotifications();
     const groups: { dateLabel: string; items: AppNotification[] }[] = [];

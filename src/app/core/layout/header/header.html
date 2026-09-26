@@ -58,7 +58,7 @@
               }
               <div class="notification-detail-actions">
                 @if (selected.referenceType === 'MISSION' || (selected.referenceId && selected.referenceId.startsWith('msn-'))) {
-                  <a class="notification-go-mission-btn" [routerLink]="isInspector() ? ['/missions', selected.referenceId, 'inspector'] : ['/missions', selected.referenceId]" (click)="closeNotifications()">
+                  <a class="notification-go-mission-btn" [routerLink]="isOperationalRole() ? ['/missions', selected.referenceId, 'inspector'] : ['/missions', selected.referenceId]" (click)="closeNotifications()">
                     <span nz-icon nzType="arrow-right"></span> Đến trang nhiệm vụ
                   </a>
                 }
