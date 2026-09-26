@@ -590,13 +590,22 @@ export class MissionDetail {
       .subscribe((event) => this.handleMissionRealtimeEvent(event));
 
     const timer = setInterval(() => this.currentTime.set(Date.now()), 30000);
+    const pollTimer = setInterval(() => {
+      const m = this.mission();
+      if (m && !m.allConfirmed && (m.status === 'PENDING_CONFIRMATION' || m.status === 'Pending' || m.status === 'Assigned' || m.status === 'Draft')) {
+        this.loadAssignmentsOverview(m.id);
+      }
+    }, 5000);
 
     this.destroyRef.onDestroy(() => {
       clearInterval(timer);
+      clearInterval(pollTimer);
+      this.realtime.leaveMission(id);
       this.stopResultDetailResize();
       this.cleanupMap();
     });
     this.realtime.connect();
+    this.realtime.joinMission(id);
 
     this.api
       .get(id)
@@ -2065,14 +2074,24 @@ export class MissionDetail {
     if (event.type === 'CONFIRMED') {
       this.mission.update((curr) => {
         if (!curr) return null;
-        let updatedTeam = curr.team;
-        if (event.assignmentId && curr.team) {
-          updatedTeam = curr.team.map((a) =>
-            a.id === event.assignmentId
-              ? { ...a, responseStatus: 'ACCEPTED' as const, respondedAt: event.timestamp || new Date().toISOString() }
-              : a,
-          );
-        }
+        const isMatch = (a: MissionAssignment) =>
+          (event.assignmentId && a.id === event.assignmentId) ||
+          (event.actorRole && a.assignmentRole?.toUpperCase() === event.actorRole.toUpperCase()) ||
+          (event.actorId && a.userId === event.actorId);
+
+        let updatedTeam = curr.team
+          ? curr.team.map((a) =>
+              isMatch(a)
+                ? {
+                    ...a,
+                    responseStatus: 'ACCEPTED' as const,
+                    respondedAt: event.timestamp || new Date().toISOString(),
+                    responseReason: event.reason || a.responseReason,
+                  }
+                : a
+            )
+          : [];
+
         const totalReq = event.totalRequiredCount ?? curr.totalRequiredCount ?? (updatedTeam ? updatedTeam.length : 3);
         const confCount = event.confirmedCount ?? (updatedTeam ? updatedTeam.filter((a) => a.responseStatus === 'ACCEPTED').length : 1);
         const isAllConfirmed = event.allConfirmed ?? (confCount >= totalReq);
@@ -2084,10 +2103,12 @@ export class MissionDetail {
           allConfirmed: isAllConfirmed,
           confirmedCount: confCount,
           totalRequiredCount: totalReq,
-          confirmationProgress: totalReq > 0 ? confCount / totalReq : 0,
+          confirmationProgress: totalReq > 0 ? `${confCount}/${totalReq}` : `${confCount}/3`,
           team: updatedTeam,
         };
       });
+
+      this.loadAssignmentsOverview(currentMission.id);
 
       if (event.allConfirmed) {
         this.actionMessage.set(`[THỰC THỜI] 100% các vai trò (Inspector, Analyst, Technician) đã chấp thuận! Nhiệm vụ ${event.missionId} chính thức SẴN SÀNG BAY.`);
@@ -2097,14 +2118,23 @@ export class MissionDetail {
     } else if (event.type === 'POSTPONED') {
       this.mission.update((curr) => {
         if (!curr) return null;
-        let updatedTeam = curr.team;
-        if (event.assignmentId && curr.team) {
-          updatedTeam = curr.team.map((a) =>
-            a.id === event.assignmentId
-              ? { ...a, responseStatus: 'POSTPONED' as const, responseReason: event.reason }
-              : a,
-          );
-        }
+        const isMatch = (a: MissionAssignment) =>
+          (event.assignmentId && a.id === event.assignmentId) ||
+          (event.actorRole && a.assignmentRole?.toUpperCase() === event.actorRole.toUpperCase()) ||
+          (event.actorId && a.userId === event.actorId);
+
+        let updatedTeam = curr.team
+          ? curr.team.map((a) =>
+              isMatch(a)
+                ? {
+                    ...a,
+                    responseStatus: 'POSTPONED' as const,
+                    responseReason: event.reason || 'Bận việc đột xuất',
+                  }
+                : a
+            )
+          : [];
+
         return {
           ...curr,
           status: 'POSTPONED',
@@ -2113,6 +2143,8 @@ export class MissionDetail {
           requiresReassignment: true,
         };
       });
+
+      this.loadAssignmentsOverview(currentMission.id);
       this.actionMessage.set(`[CẢNH BÁO THỰC THỜI] Thành viên ${event.actorName || 'Đội bay'} (${event.actorRole || ''}) yêu cầu hoãn: "${event.reason || ''}". Quản lý có thể tái phân công ngay vai trò này.`);
     } else if (event.type === 'REASSIGNED') {
       this.actionMessage.set(`[THỰC THỜI] Quản lý đã tái phân công nhân sự mới cho vai trò ${event.actorRole || 'Đội bay'}.`);

@@ -107,33 +107,46 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
     description: [''],
   });
 
-  // Base personnel list from assessment or fallback
+  // Base personnel list from real database users, falling back to assessment or defaults
   protected readonly allPersonnelCandidates = computed<readonly PersonnelCandidate[]>(() => {
+    const realUsers = this.users();
+    if (realUsers && realUsers.length > 0) {
+      return realUsers.map((u) => {
+        const r = (u.role || '').toLowerCase();
+        const email = (u.email || '').toLowerCase();
+        const username = (u.username || '').toLowerCase();
+        let roleType: 'INSPECTOR' | 'ANALYST' | 'TECHNICIAN' = 'INSPECTOR';
+        if (r.includes('analyst') || r.includes('phân tích') || username.includes('analyst') || email.includes('analyst')) {
+          roleType = 'ANALYST';
+        } else if (r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì') || username.includes('technician') || email.includes('technician')) {
+          roleType = 'TECHNICIAN';
+        } else if (r.includes('inspector') || r.includes('pilot') || r.includes('phi công') || username.includes('inspector') || email.includes('inspector')) {
+          roleType = 'INSPECTOR';
+        }
+
+        const isActive = u.status !== 'Inactive' && u.status !== 'Locked';
+        return {
+          id: u.id,
+          name: u.fullName || u.username || u.email,
+          role: roleType,
+          region: 'Khu vực quản lý',
+          availability: 'AVAILABLE' as const,
+          eligibility: 'ELIGIBLE' as const,
+          overallEligibility: isActive,
+          isActive,
+          isEligible: isActive,
+          isWithinScope: true,
+          isAvailable: isActive,
+          reason: 'Người dùng thực tế từ CSDL',
+        };
+      });
+    }
+
     const ass = this.assessmentData();
     if (ass && ass.personnelCandidates && ass.personnelCandidates.length > 0) {
       return ass.personnelCandidates;
     }
-    // Fallback to active users
-    return this.users().map((u) => {
-      const r = (u.role || '').toLowerCase();
-      let roleType = 'Inspector';
-      if (r.includes('analyst') || r.includes('phân tích') || u.username.toLowerCase().includes('analyst')) roleType = 'Analyst';
-      else if (r.includes('tech') || r.includes('kỹ thuật') || r.includes('bảo trì') || u.username.toLowerCase().includes('technician')) roleType = 'Technician';
-      return {
-        id: u.id,
-        name: u.fullName || u.username || u.email,
-        role: roleType as any,
-        region: 'Khu vực quản lý',
-        availability: 'AVAILABLE' as const,
-        eligibility: 'ELIGIBLE' as const,
-        overallEligibility: true,
-        isActive: true,
-        isEligible: true,
-        isWithinScope: true,
-        isAvailable: true,
-        reason: 'Đủ điều kiện tiêu chuẩn vận hành',
-      };
-    });
+    return [];
   });
 
   // Derived candidate lists partitioned by the 3 required roles satisfying 5 AND criteria
@@ -276,16 +289,17 @@ export class MissionCreate implements OnInit, AfterViewInit, OnDestroy {
 
   private autoSelectCandidatesIfEmpty(): void {
     const c = this.form.controls;
-    if (!c.inspectorId.value) {
-      const ins = this.eligibleInspectors()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('pilot'))?.id;
+    const isMock = (id: string | null | undefined) => !id || id.startsWith('usr-');
+    if (isMock(c.inspectorId.value)) {
+      const ins = this.eligibleInspectors()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('pilot') || (u.email || '').toLowerCase().includes('inspector'))?.id;
       if (ins) c.inspectorId.setValue(ins);
     }
-    if (!c.analystId.value) {
-      const ana = this.eligibleAnalysts()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('analyst'))?.id;
+    if (isMock(c.analystId.value)) {
+      const ana = this.eligibleAnalysts()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('analyst') || (u.email || '').toLowerCase().includes('analyst'))?.id;
       if (ana) c.analystId.setValue(ana);
     }
-    if (!c.technicianId.value) {
-      const tec = this.eligibleTechnicians()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('tech'))?.id;
+    if (isMock(c.technicianId.value)) {
+      const tec = this.eligibleTechnicians()[0]?.id || this.users().find((u) => (u.role || '').toLowerCase().includes('tech') || (u.email || '').toLowerCase().includes('technician'))?.id;
       if (tec) c.technicianId.setValue(tec);
     }
   }

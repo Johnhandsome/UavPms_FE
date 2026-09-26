@@ -3,6 +3,7 @@ import { inject, Injectable } from '@angular/core';
 import { catchError, forkJoin, map, Observable, of, switchMap, throwError } from 'rxjs';
 import { environment } from '../../../../environments/environment';
 import { unwrapApiData } from '../../../models/api.models';
+import { Auth } from '../../../core/auth/auth';
 import {
   Mission,
   MissionAssignment,
@@ -25,6 +26,11 @@ export interface MissionFilters {
 }
 
 const LOCAL_STORAGE_MISSIONS_KEY = 'uav_pms_missions_data_v2';
+
+function isValidGuid(val?: string | null): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+}
 
 export function cleanLegacyMockNames(m: Mission): Mission {
   if (!m) return m;
@@ -300,6 +306,7 @@ export function syncMissionsWithAssessments(): void {
 @Injectable({ providedIn: 'root' })
 export class MissionsApi {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(Auth);
   private readonly url = `${environment.apiBaseUrl}/missions`;
 
   list(filters: MissionFilters): Observable<MissionPage> {
@@ -337,6 +344,11 @@ export class MissionsApi {
 
   my(): Observable<readonly Mission[]> {
     syncMissionsWithAssessments();
+    const currentUser = this.auth.user();
+    const uid = currentUser?.id?.toLowerCase();
+    const urole = (currentUser?.role || '').toLowerCase();
+    const isOps = ['inspector', 'pilot', 'analyst', 'technician', 'maintenancetechnician'].includes(urole);
+
     return this.http.get<unknown>(`${this.url}/my`).pipe(
       catchError(() => of({ data: [] })),
       switchMap((res) => {
@@ -360,7 +372,25 @@ export class MissionsApi {
         );
       }),
       map((rawItems) => {
-        const backendList = rawItems.map(normalizeMission).map(mergeWithLocalMission);
+        const backendList = rawItems.map(normalizeMission).map((m) => {
+          if (currentUser && isOps) {
+            const hasMyId = m.team?.some((t) => t.userId && t.userId.toLowerCase() === uid);
+            if (!hasMyId && m.team) {
+              const targetRole = urole.includes('analyst')
+                ? 'ANALYST'
+                : urole.includes('tech')
+                ? 'TECHNICIAN'
+                : 'INSPECTOR';
+              const teamMember = m.team.find((t) => t.assignmentRole === targetRole);
+              if (teamMember && (!teamMember.userId || teamMember.userId.startsWith('usr-') || teamMember.userId === targetRole.toLowerCase())) {
+                (teamMember as any).userId = currentUser.id;
+                (teamMember as any).userName = currentUser.fullName || currentUser.email;
+              }
+            }
+          }
+          return mergeWithLocalMission(m);
+        });
+
         for (const m of backendList) {
           saveLocalMission(m);
         }
@@ -373,8 +403,33 @@ export class MissionsApi {
   get(id: string): Observable<Mission> {
     syncMissionsWithAssessments();
     const local = getLocalMission(id);
-    return this.http.get<unknown>(`${this.url}/${id}`).pipe(
-      map((response) => mergeWithLocalMission(normalizeMission(unwrapApiData(response)))),
+    const v1Url = `${this.url}/${id}`;
+    const v2Url = `${environment.apiBaseUrl.replace(/\/v1$/, '')}/v2/missions/${id}`;
+
+    return this.http.get<unknown>(v1Url).pipe(
+      catchError(() => this.http.get<unknown>(v2Url)),
+      switchMap((response) => {
+        const baseMission = normalizeMission(unwrapApiData(response));
+        return this.getAssignmentsOverview(id).pipe(
+          map((overview) => {
+            if (!overview) return mergeWithLocalMission(baseMission);
+            const team = overview.assignments && overview.assignments.length > 0 ? overview.assignments : baseMission.team;
+            const confirmedCount = overview.confirmedCount ?? baseMission.confirmedCount;
+            const totalRequiredCount = overview.totalRequiredCount ?? baseMission.totalRequiredCount;
+            const allConfirmed = overview.allConfirmed ?? baseMission.allConfirmed;
+            return mergeWithLocalMission({
+              ...baseMission,
+              team,
+              confirmedCount,
+              totalRequiredCount,
+              allConfirmed,
+              confirmationProgress: `${confirmedCount}/${totalRequiredCount}`,
+              status: allConfirmed ? 'CONFIRMED' : (baseMission.status === 'CONFIRMED' && !allConfirmed ? 'PENDING_CONFIRMATION' : baseMission.status),
+            });
+          }),
+          catchError(() => of(mergeWithLocalMission(baseMission)))
+        );
+      }),
       catchError(() => {
         if (local) return of(local);
         const sim = createSimulatedMissionById(id);
@@ -396,7 +451,7 @@ export class MissionsApi {
       title: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
       name: request.name || request.title || 'Nhiệm vụ kiểm tra hành lang đường dây',
       description: request.description,
-      regionId: request.regionId,
+      regionId: request.regionId || 'reg-cpc',
       missionType: request.missionType,
       scheduleId: request.scheduleId || null,
       triggerReason: request.triggerReason || null,
@@ -500,22 +555,42 @@ export class MissionsApi {
     userName = 'Thành viên đội ngũ'
   ): Observable<Mission> {
     const now = new Date().toISOString();
-    const endpoint = assignmentId
-      ? `${this.url}/${id}/assignments/${assignmentId}/accept`
-      : `${this.url}/${id}/assignments/accept`;
+    const v2Base = `${environment.apiBaseUrl.replace(/\/v1$/, '')}/v2/missions/${id}`;
+    const v1Base = `${this.url}/${id}`;
+    const body = { notes, responseStatus: 'Accepted' };
 
-    const apiCall$ = this.http.post<unknown>(endpoint, { notes }).pipe(
-      catchError(() => this.http.post<unknown>(`${this.url}/${id}/confirm`, { notes }))
+    const calls$: Observable<unknown>[] = [
+      this.http.post<unknown>(`${v2Base}/assignments/accept`, body),
+      this.http.post<unknown>(`${v1Base}/assignments/accept`, body),
+    ];
+
+    if (isValidGuid(assignmentId)) {
+      calls$.push(
+        this.http.post<unknown>(`${v2Base}/assignments/${assignmentId}/accept`, body),
+        this.http.post<unknown>(`${v1Base}/assignments/${assignmentId}/accept`, body),
+        this.http.post<unknown>(`${v1Base}/assignments/${assignmentId}/respond`, { responseStatus: 'Accepted', notes })
+      );
+    }
+
+    calls$.push(
+      this.http.post<unknown>(`${v1Base}/assignments/respond`, { assignmentId, responseStatus: 'Accepted', notes }),
+      this.http.post<unknown>(`${v1Base}/confirm`, { notes })
     );
+
+    let apiCall$ = calls$[0].pipe(catchError(() => calls$[1]));
+    for (let i = 2; i < calls$.length; i++) {
+      const nextCall = calls$[i];
+      apiCall$ = apiCall$.pipe(catchError(() => nextCall));
+    }
 
     return apiCall$.pipe(
       catchError(() => of(null)),
       switchMap(() => this.get(id)),
       map((m) => {
         const team = (m.team || []).map((member) => {
-          const isTarget = assignmentId
-            ? member.id === assignmentId
-            : member.assignmentRole.toUpperCase() === role.toUpperCase();
+          const isTarget =
+            (isValidGuid(assignmentId) && member.id === assignmentId) ||
+            member.assignmentRole.toUpperCase() === role.toUpperCase();
           if (isTarget) {
             return {
               ...member,
@@ -617,22 +692,42 @@ export class MissionsApi {
     userName = 'Thành viên đội ngũ'
   ): Observable<Mission> {
     const now = new Date().toISOString();
-    const endpoint = assignmentId
-      ? `${this.url}/${id}/assignments/${assignmentId}/postpone`
-      : `${this.url}/${id}/assignments/postpone`;
+    const v2Base = `${environment.apiBaseUrl.replace(/\/v1$/, '')}/v2/missions/${id}`;
+    const v1Base = `${this.url}/${id}`;
+    const body = { reason, notes: reason, responseStatus: 'Postponed' };
 
-    const apiCall$ = this.http.post<unknown>(endpoint, { reason }).pipe(
-      catchError(() => this.http.post<unknown>(`${this.url}/${id}/postpone`, { reason }))
+    const calls$: Observable<unknown>[] = [
+      this.http.post<unknown>(`${v2Base}/assignments/postpone`, body),
+      this.http.post<unknown>(`${v1Base}/assignments/postpone`, body),
+    ];
+
+    if (isValidGuid(assignmentId)) {
+      calls$.push(
+        this.http.post<unknown>(`${v2Base}/assignments/${assignmentId}/postpone`, body),
+        this.http.post<unknown>(`${v1Base}/assignments/${assignmentId}/postpone`, body),
+        this.http.post<unknown>(`${v1Base}/assignments/${assignmentId}/respond`, { responseStatus: 'Postponed', reason })
+      );
+    }
+
+    calls$.push(
+      this.http.post<unknown>(`${v1Base}/assignments/respond`, { assignmentId, responseStatus: 'Postponed', reason }),
+      this.http.post<unknown>(`${v1Base}/postpone`, { reason })
     );
+
+    let apiCall$ = calls$[0].pipe(catchError(() => calls$[1]));
+    for (let i = 2; i < calls$.length; i++) {
+      const nextCall = calls$[i];
+      apiCall$ = apiCall$.pipe(catchError(() => nextCall));
+    }
 
     return apiCall$.pipe(
       catchError(() => of(null)),
       switchMap(() => this.get(id)),
       map((m) => {
         const team = (m.team || []).map((member) => {
-          const isTarget = assignmentId
-            ? member.id === assignmentId
-            : member.assignmentRole.toUpperCase() === role.toUpperCase();
+          const isTarget =
+            (isValidGuid(assignmentId) && member.id === assignmentId) ||
+            member.assignmentRole.toUpperCase() === role.toUpperCase();
           if (isTarget) {
             return {
               ...member,
@@ -898,9 +993,13 @@ export class MissionsApi {
   }
 
   getAssignmentsOverview(missionId: string): Observable<MissionAssignmentsOverview | null> {
+    const v1Url = `${this.url}/${missionId}/assignments`;
+    const v2Url = `${environment.apiBaseUrl.replace(/\/v1$/, '')}/v2/missions/${missionId}/assignments`;
+
     return this.http
-      .get<unknown>(`${this.url}/${missionId}/assignments`)
+      .get<unknown>(v1Url)
       .pipe(
+        catchError(() => this.http.get<unknown>(v2Url)),
         map((res) => {
           const raw = unwrapApiData(res);
           if (!raw || typeof raw !== 'object') return null;
@@ -934,7 +1033,8 @@ export class MissionsApi {
               id: stringValue(member['id'], `asg-${Math.random().toString(36).slice(2, 7)}`),
               missionId,
               userId: stringValue(member['userId']),
-              userName: stringValue(pick(member, 'userName', 'name', 'fullName'), 'Thành viên'),
+              userName: stringValue(pick(member, 'userName', 'name', 'fullName', 'userFullName'), 'Thành viên'),
+              userFullName: stringValue(pick(member, 'userFullName', 'fullName', 'userName', 'name')),
               assignmentRole: role,
               status: stringValue(member['status'], 'Active'),
               responseStatus,
@@ -984,9 +1084,9 @@ export class MissionsApi {
           }
 
           const requiredMembers = team.filter((m) => m.isRequired !== false && m.status !== 'Revoked');
-          const confirmedCount = requiredMembers.filter((m) => m.responseStatus === 'ACCEPTED').length;
-          const totalRequiredCount = Math.max(3, requiredMembers.length);
-          const allConfirmed = requiredMembers.length >= 3 && confirmedCount >= totalRequiredCount && requiredMembers.every((m) => m.responseStatus === 'ACCEPTED');
+          const confirmedCount = data['confirmedCount'] !== undefined ? Number(data['confirmedCount']) : requiredMembers.filter((m) => m.responseStatus === 'ACCEPTED').length;
+          const totalRequiredCount = data['totalRequiredCount'] !== undefined ? Number(data['totalRequiredCount']) : Math.max(3, requiredMembers.length);
+          const allConfirmed = data['allConfirmed'] !== undefined ? Boolean(data['allConfirmed']) : (requiredMembers.length >= 3 && confirmedCount >= totalRequiredCount && requiredMembers.every((m) => m.responseStatus === 'ACCEPTED'));
 
           return {
             missionId,
@@ -995,7 +1095,7 @@ export class MissionsApi {
             allConfirmed,
             pendingRoles: requiredMembers.filter((m) => m.responseStatus !== 'ACCEPTED').map((m) => m.assignmentRole),
             hasPostponed: requiredMembers.some((m) => m.responseStatus === 'POSTPONED'),
-            confirmationDeadline: stringValue(data['confirmationDeadline']),
+            confirmationDeadline: stringValue(pick(data, 'confirmationDeadline', 'ConfirmationDeadline')),
             assignments: team,
           };
         }),
@@ -1506,7 +1606,8 @@ const normalizeMission = (value: unknown): Mission => {
       id: stringValue(member['id'], `asg-${Math.random().toString(36).slice(2, 7)}`),
       missionId: stringValue(member['missionId']),
       userId: stringValue(member['userId']),
-      userName: stringValue(pick(member, 'userName', 'name', 'fullName'), 'Thành viên đội bay'),
+      userName: stringValue(pick(member, 'userName', 'name', 'fullName', 'userFullName'), 'Thành viên đội bay'),
+      userFullName: stringValue(pick(member, 'userFullName', 'fullName', 'userName', 'name')),
       assignmentRole: role,
       status: stringValue(member['status'], 'Active'),
       responseStatus,

@@ -152,10 +152,12 @@ export class MissionInspector {
 
     this.destroyRef.onDestroy(() => {
       clearInterval(timer);
+      this.realtime.leaveMission(id);
       this.cleanupMap();
     });
 
     this.realtime.connect();
+    this.realtime.joinMission(id);
     this.realtime.missionEvents$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
@@ -226,7 +228,8 @@ export class MissionInspector {
             status: updated.status,
             actorRole: role,
             assignmentId: assign?.id,
-            actorName: this.currentUser()?.fullName || updated.assignedToUsername || 'Thành viên đội bay',
+            actorId: this.currentUser()?.id,
+            actorName: this.currentUser()?.fullName || this.currentUser()?.email || updated.assignedToUsername || 'Thành viên đội bay',
             reason: note,
             allConfirmed: updated.allConfirmed,
             confirmedCount: conf,
@@ -277,7 +280,8 @@ export class MissionInspector {
             reason,
             actorRole: role,
             assignmentId: assign?.id,
-            actorName: this.currentUser()?.fullName || updated.assignedToUsername || 'Thành viên đội bay',
+            actorId: this.currentUser()?.id,
+            actorName: this.currentUser()?.fullName || this.currentUser()?.email || updated.assignedToUsername || 'Thành viên đội bay',
             timestamp: new Date().toISOString(),
           });
         },
