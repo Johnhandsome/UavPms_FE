@@ -6,6 +6,9 @@ import { syncMissionsWithAssessments } from '../../missions/data-access/missions
 import { NotificationsApi } from './notifications-api';
 import { MissionLifecycleRealtimeEvent, NotificationsRealtime } from './notifications-realtime';
 
+import { Auth } from '../../../core/auth/auth';
+import { AuthUser } from '../../../models/auth.models';
+
 const LOCAL_STORAGE_NOTIFS_KEY = 'uav_pms_notifications_v1';
 
 function getLocalNotifications(): AppNotification[] {
@@ -35,6 +38,17 @@ function saveLocalNotifications(list: readonly AppNotification[]): void {
   } catch {}
 }
 
+function getCurrentSessionUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem('uavpms.session') || sessionStorage.getItem('uavpms.session');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.user || null;
+  } catch {
+    return null;
+  }
+}
+
 function syncActiveMissionsToNotifications(): AppNotification[] {
   const list: AppNotification[] = [];
   try {
@@ -42,23 +56,49 @@ function syncActiveMissionsToNotifications(): AppNotification[] {
     const raw = localStorage.getItem('uav_pms_missions_data_v2') || sessionStorage.getItem('uav_pms_missions_data_v2');
     if (!raw) return list;
     const missions = JSON.parse(raw);
+    const currentUser = getCurrentSessionUser();
+    const currentRole = (currentUser?.role || '').toLowerCase();
+    const isManagerOrAdmin = currentRole.includes('manager') || currentRole.includes('admin') || currentRole.includes('quản lý');
+
     for (const m of Object.values(missions) as any[]) {
       if (m && m.id) {
         const s = (m.status || '').toUpperCase();
         if (s === 'PENDING_CONFIRMATION' || s === 'ASSIGNED' || s === 'PENDING' || s === 'DRAFT') {
-          list.push({
-            id: `notif-mission-dispatch-${m.id}`,
-            title: `[MF02 ĐIỀU PHỐI] Yêu cầu xác nhận nhiệm vụ: ${m.missionCode || m.id}`,
-            body: `Bạn được phân công tham gia nhiệm vụ "${m.title || 'Khảo sát đường dây'}". Hạn chót xác nhận: ${m.confirmationDeadline ? new Date(m.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${m.managerInstructions ? ` Lời dặn: "${m.managerInstructions}"` : ''}`,
-            type: 'MISSION_DISPATCH',
-            referenceType: 'MISSION',
-            referenceId: m.id,
-            createdAt: m.createdAt || new Date().toISOString(),
-            isRead: false,
-          });
+          if (isManagerOrAdmin) {
+            list.push({
+              id: `notif-mission-dispatch-${m.id}`,
+              userId: currentUser?.id,
+              title: `[MF02 ĐIỀU PHỐI] Đã ban hành nhiệm vụ: ${m.missionCode || m.id}`,
+              body: `Nhiệm vụ "${m.title || 'Khảo sát đường dây'}" đã được ban hành tới đội bay (Inspector, Analyst, Technician). Hạn chót xác nhận: ${m.confirmationDeadline ? new Date(m.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}. Tiến độ xác nhận: ${m.confirmedCount || 0}/${m.totalRequiredCount || 3}.`,
+              type: 'MISSION_DISPATCH',
+              referenceType: 'MISSION',
+              referenceId: m.id,
+              createdAt: m.createdAt || new Date().toISOString(),
+              isRead: true,
+            });
+          } else {
+            const isAssigned = !currentUser || !m.team || m.team.length === 0 || m.team.some((mem: any) =>
+              (currentUser.id && mem.userId === currentUser.id) ||
+              (mem.assignmentRole && currentRole.includes(mem.assignmentRole.toLowerCase()))
+            );
+            if (isAssigned) {
+              list.push({
+                id: `notif-mission-dispatch-${m.id}`,
+                userId: currentUser?.id,
+                title: `[MF02 ĐIỀU PHỐI] Yêu cầu xác nhận nhiệm vụ: ${m.missionCode || m.id}`,
+                body: `Bạn được phân công tham gia nhiệm vụ "${m.title || 'Khảo sát đường dây'}". Hạn chót xác nhận: ${m.confirmationDeadline ? new Date(m.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${m.managerInstructions ? ` Lời dặn: "${m.managerInstructions}"` : ''}`,
+                type: 'MISSION_DISPATCH',
+                referenceType: 'MISSION',
+                referenceId: m.id,
+                createdAt: m.createdAt || new Date().toISOString(),
+                isRead: false,
+              });
+            }
+          }
         } else if (s === 'CONFIRMED') {
           list.push({
             id: `notif-mission-conf-${m.id}`,
+            userId: currentUser?.id,
             title: `[MF02 TIẾP NHẬN] Nhiệm vụ ${m.missionCode || m.id} đã được xác nhận`,
             body: `Đội bay đã xác nhận tiếp nhận nhiệm vụ "${m.title || 'Khảo sát đường dây'}". Sẵn sàng cất cánh.`,
             type: 'MISSION_CONFIRMED',
@@ -70,6 +110,7 @@ function syncActiveMissionsToNotifications(): AppNotification[] {
         } else {
           list.push({
             id: `notif-mission-stat-${m.id}`,
+            userId: currentUser?.id,
             title: `[MF02 NHIỆM VỤ] Thông tin nhiệm vụ: ${m.missionCode || m.id}`,
             body: `Nhiệm vụ "${m.title || 'Khảo sát đường dây'}" đang ở trạng thái ${m.status}.`,
             type: 'MISSION_UPDATE',
@@ -85,18 +126,40 @@ function syncActiveMissionsToNotifications(): AppNotification[] {
   return list;
 }
 
-function convertMissionEventToNotification(event: MissionLifecycleRealtimeEvent, currentUserId?: string): AppNotification | null {
+function convertMissionEventToNotification(
+  event: MissionLifecycleRealtimeEvent,
+  currentUserId?: string,
+  currentUserRole?: string
+): AppNotification | null {
   const now = event.timestamp || new Date().toISOString();
   const missionId = event.missionId;
   const actor = event.actorName || (event.actorRole ? `[${event.actorRole}]` : 'Hệ thống');
+  const role = (currentUserRole || '').toLowerCase();
+  const isManagerOrAdmin = role.includes('manager') || role.includes('admin') || role.includes('quản lý');
 
   switch (event.type) {
     case 'DISPATCHED':
+    case 'ASSIGNED':
+    case 'CREATED':
+    case 'REASSIGNED':
+      if (isManagerOrAdmin) {
+        return {
+          id: `notif-disp-${missionId}`,
+          userId: currentUserId,
+          title: `[MF02 ĐIỀU PHỐI] Đã ban hành nhiệm vụ ${missionId}`,
+          body: `Nhiệm vụ đã được gửi tới đội ngũ vận hành. Hạn chót xác nhận: ${event.confirmationDeadline ? new Date(event.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.`,
+          type: 'MISSION_DISPATCH',
+          referenceType: 'MISSION',
+          referenceId: missionId,
+          createdAt: now,
+          isRead: true,
+        };
+      }
       return {
         id: `notif-disp-${missionId}`,
         userId: currentUserId,
         title: `[MF02 ĐIỀU PHỐI] Yêu cầu xác nhận nhiệm vụ ${missionId}`,
-        body: `Nhiệm vụ mới đã được ban hành. Hạn chót xác nhận: ${event.confirmationDeadline ? new Date(event.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${event.managerInstructions ? ` Lời dặn: "${event.managerInstructions}"` : ''}`,
+        body: `Bạn được phân công tham gia nhiệm vụ. Hạn chót xác nhận: ${event.confirmationDeadline ? new Date(event.confirmationDeadline).toLocaleString('vi-VN') : 'Trước giờ bay'}.${event.managerInstructions ? ` Lời dặn: "${event.managerInstructions}"` : ''}`,
         type: 'MISSION_DISPATCH',
         referenceType: 'MISSION',
         referenceId: missionId,
@@ -105,7 +168,7 @@ function convertMissionEventToNotification(event: MissionLifecycleRealtimeEvent,
       };
     case 'CONFIRMED':
       return {
-        id: `notif-conf-${missionId}-${event.actorRole || 'INSPECTOR'}`,
+        id: `notif-conf-${missionId}-${event.actorRole || 'MEMBER'}-${Date.now()}`,
         userId: currentUserId,
         title: `[MF02 TIẾP NHẬN] ${actor} đã xác nhận nhiệm vụ ${missionId}`,
         body: `Tiến độ: ${event.confirmedCount ?? 1}/${event.totalRequiredCount ?? 3}. ${event.allConfirmed ? 'Tất cả 3 vai trò đã sẵn sàng!' : 'Đang chờ các vai trò còn lại.'}`,
@@ -186,6 +249,7 @@ function convertMissionEventToNotification(event: MissionLifecycleRealtimeEvent,
 export class NotificationsStore {
   private readonly api = inject(NotificationsApi);
   private readonly realtime = inject(NotificationsRealtime);
+  private readonly auth = inject(Auth);
   private readonly destroyRef = inject(DestroyRef);
   private readonly notificationsState = signal<readonly AppNotification[]>(getLocalNotifications());
   private readonly selectedState = signal<AppNotification | null>(null);
@@ -199,11 +263,34 @@ export class NotificationsStore {
   readonly filters = signal<NotificationFilters>({ read: 'all', type: '', sort: 'newest' });
   readonly notifications = this.notificationsState.asReadonly();
   readonly selected = this.selectedState.asReadonly();
-  readonly unreadCount = computed(() => this.notificationsState().filter((item) => !item.isRead).length);
+  readonly unreadCount = computed(() => this.filteredNotifications().filter((item) => !item.isRead).length);
   readonly types = computed(() => Array.from(new Set(this.notificationsState().map((item) => item.type).filter(Boolean))).sort() as string[]);
   readonly filteredNotifications = computed(() => {
     const filters = this.filters();
+    const currentUser = this.auth.user();
+    const currentUserId = currentUser?.id?.toLowerCase();
+    const currentUserEmail = currentUser?.email?.toLowerCase();
+    const currentRole = (currentUser?.role || '').toLowerCase();
+    const isManagerOrAdmin = currentRole.includes('manager') || currentRole.includes('admin') || currentRole.includes('quản lý');
+
     const items = this.notificationsState().filter((item) => {
+      // 1. Manager must NEVER see notifications telling them they are assigned to a mission
+      if (isManagerOrAdmin && item.type === 'MISSION_DISPATCH' && (item.body?.includes('Bạn được phân công') || item.title?.includes('Yêu cầu xác nhận'))) {
+        return false;
+      }
+
+      // 2. Operational roles should not see manager-targeted dispatch notifications
+      if (!isManagerOrAdmin && item.type === 'MISSION_DISPATCH' && item.title?.includes('Đã ban hành nhiệm vụ')) {
+        return false;
+      }
+
+      if (item.userId && currentUserId) {
+        const target = item.userId.toLowerCase();
+        const matches =
+          target === currentUserId ||
+          (currentUserEmail && target === currentUserEmail);
+        if (!matches) return false;
+      }
       const readMatch =
         filters.read === 'all' ||
         (filters.read === 'read' && item.isRead) ||
@@ -223,7 +310,8 @@ export class NotificationsStore {
     this.realtime.missionEvents$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
-        const notif = convertMissionEventToNotification(event);
+        const u = this.auth.user();
+        const notif = convertMissionEventToNotification(event, u?.id, u?.role);
         if (notif) this.upsert(notif);
       });
     this.realtime.status$

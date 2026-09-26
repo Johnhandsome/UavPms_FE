@@ -27,6 +27,8 @@ export interface AiAnalysisStatusChangedEvent {
 export type MissionLifecycleEventType =
   | 'CONFIRMED'
   | 'DISPATCHED'
+  | 'ASSIGNED'
+  | 'CREATED'
   | 'SUSPENDED'
   | 'POSTPONED'
   | 'REASSIGNED'
@@ -75,6 +77,7 @@ export class NotificationsRealtime {
   private connection: HubConnection | null = null;
   private starting: Promise<void> | null = null;
   private broadcastChannel: BroadcastChannel | null = null;
+  private readonly activeMissionGroups = new Set<string>();
 
   readonly notifications$ = this.notificationSubject.asObservable();
   readonly aiAnalysisStatus$ = this.aiAnalysisStatusSubject.asObservable();
@@ -99,11 +102,33 @@ export class NotificationsRealtime {
     }
   }
 
+  joinMission(missionId: string): void {
+    if (!missionId) return;
+    this.activeMissionGroups.add(missionId);
+    if (this.connection && this.connection.state === HubConnectionState.Connected) {
+      this.connection.invoke('JoinMissionGroup', missionId).catch(() => {});
+      this.connection.invoke('JoinMission', missionId).catch(() => {});
+      this.connection.invoke('JoinGroup', `mission_${missionId}`).catch(() => {});
+      this.connection.invoke('JoinGroup', missionId).catch(() => {});
+    }
+  }
+
+  leaveMission(missionId: string): void {
+    if (!missionId) return;
+    this.activeMissionGroups.delete(missionId);
+    if (this.connection && this.connection.state === HubConnectionState.Connected) {
+      this.connection.invoke('LeaveMissionGroup', missionId).catch(() => {});
+      this.connection.invoke('LeaveMission', missionId).catch(() => {});
+      this.connection.invoke('LeaveGroup', `mission_${missionId}`).catch(() => {});
+      this.connection.invoke('LeaveGroup', missionId).catch(() => {});
+    }
+  }
+
   broadcastMissionEvent(event: MissionLifecycleRealtimeEvent): void {
     // 1. Emit locally on current tab
     this.zone.run(() => this.missionEventsSubject.next(event));
 
-    // 2. Broadcast across other tabs on same device (instant <10ms sync)
+    // 2. Broadcast across other tabs on same device (instant sync)
     try {
       this.broadcastChannel?.postMessage(event);
     } catch {
@@ -112,9 +137,9 @@ export class NotificationsRealtime {
 
     // 3. Emit via SignalR Hub WebSocket to server and other network clients
     if (this.connection && this.connection.state === HubConnectionState.Connected) {
-      this.connection.send('BroadcastMissionLifecycle', event).catch(() => {
-        // Fallback or ignore if server method doesn't exist
-      });
+      this.connection.send('SendMissionEvent', event).catch(() => {});
+      this.connection.send('BroadcastMissionLifecycle', event).catch(() => {});
+      this.connection.send('BroadcastEvent', event).catch(() => {});
     }
   }
 
@@ -124,7 +149,14 @@ export class NotificationsRealtime {
     this.registerHandlers(this.connection);
     this.starting = this.connection
       .start()
-      .then(() => this.zone.run(() => this.statusSubject.next('connected')))
+      .then(() => {
+        this.zone.run(() => {
+          this.statusSubject.next('connected');
+          for (const mId of this.activeMissionGroups) {
+            this.joinMission(mId);
+          }
+        });
+      })
       .catch(() => this.zone.run(() => this.statusSubject.next('disconnected')))
       .finally(() => {
         this.starting = null;
@@ -170,6 +202,24 @@ export class NotificationsRealtime {
       this.zone.run(() => this.missionEventsSubject.next(parsed));
     };
 
+    connection.on('MissionLifecycleEvent', (payload: unknown) => {
+      const data = record(payload);
+      const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
+      emitLifecycle(type, payload);
+    });
+
+    connection.on('ReceiveMissionLifecycleEvent', (payload: unknown) => {
+      const data = record(payload);
+      const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
+      emitLifecycle(type, payload);
+    });
+
+    connection.on('ReceiveMissionLifecycle', (payload: unknown) => {
+      const data = record(payload);
+      const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
+      emitLifecycle(type, payload);
+    });
+
     connection.on('MissionLifecycleChanged', (payload: unknown) => {
       const data = record(payload);
       const type = (stringValue(data['type']).toUpperCase() as MissionLifecycleEventType) || 'CONFIRMED';
@@ -183,17 +233,38 @@ export class NotificationsRealtime {
     });
 
     connection.on('MissionConfirmed', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('ReceiveMissionConfirmed', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('MissionAccepted', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('AssignmentAccepted', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('ReceiveAssignmentAccepted', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
     connection.on('MissionDispatched', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('MissionAssigned', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('MissionCreated', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('ReceiveMissionAssigned', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('ReceiveMissionCreated', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
+    connection.on('AssignmentCreated', (payload: unknown) => emitLifecycle('DISPATCHED', payload));
     connection.on('MissionSuspended', (payload: unknown) => emitLifecycle('SUSPENDED', payload));
     connection.on('MissionPostponed', (payload: unknown) => emitLifecycle('POSTPONED', payload));
+    connection.on('ReceiveMissionPostponed', (payload: unknown) => emitLifecycle('POSTPONED', payload));
+    connection.on('AssignmentPostponed', (payload: unknown) => emitLifecycle('POSTPONED', payload));
+    connection.on('ReceiveAssignmentPostponed', (payload: unknown) => emitLifecycle('POSTPONED', payload));
     connection.on('MissionResumed', (payload: unknown) => emitLifecycle('RESUMED', payload));
     connection.on('MissionCancelled', (payload: unknown) => emitLifecycle('CANCELLED', payload));
     connection.on('MissionCommunicationReceived', (payload: unknown) => emitLifecycle('COMMUNICATION', payload));
     connection.on('MissionReminderSent', (payload: unknown) => emitLifecycle('REMINDER', payload));
     connection.on('MissionConfirmationOverdue', (payload: unknown) => emitLifecycle('OVERDUE', payload));
+    connection.on('MissionUpdated', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
+    connection.on('ReceiveMissionUpdated', (payload: unknown) => emitLifecycle('CONFIRMED', payload));
 
     connection.onreconnecting(() => this.zone.run(() => this.statusSubject.next('reconnecting')));
-    connection.onreconnected(() => this.zone.run(() => this.statusSubject.next('connected')));
+    connection.onreconnected(() => {
+      this.zone.run(() => {
+        this.statusSubject.next('connected');
+        for (const mId of this.activeMissionGroups) {
+          this.joinMission(mId);
+        }
+      });
+    });
     connection.onclose(() => this.zone.run(() => this.statusSubject.next('disconnected')));
   }
 }
@@ -231,9 +302,16 @@ function normalizeMissionLifecycleEvent(
   defaultType: MissionLifecycleEventType,
   payload: unknown
 ): MissionLifecycleRealtimeEvent {
-  const source = record(payload);
-  const type = (stringValue(pick(source, 'type', 'Type')).toUpperCase() as MissionLifecycleEventType) || defaultType;
-  const missionId = stringValue(pick(source, 'missionId', 'MissionId', 'id', 'Id'));
+  const raw = record(payload);
+  const source = (raw['data'] && typeof raw['data'] === 'object') ? record(raw['data']) : raw;
+  const rawType = stringValue(pick(source, 'type', 'Type', 'eventType', 'EventType')).toUpperCase();
+  let type: MissionLifecycleEventType = defaultType;
+  if (rawType === 'ASSIGNED' || rawType === 'CREATED' || rawType === 'DISPATCHED' || rawType === 'MISSIONDISPATCHED' || rawType === 'MISSIONASSIGNED' || rawType === 'MISSIONCREATED') {
+    type = 'DISPATCHED';
+  } else if (rawType) {
+    type = rawType as MissionLifecycleEventType;
+  }
+  const missionId = stringValue(pick(source, 'missionId', 'MissionId', 'id', 'Id', 'entityId', 'EntityId'));
   const actorRole = (stringValue(pick(source, 'actorRole', 'ActorRole', 'senderRole', 'SenderRole')).toUpperCase() as 'MANAGER' | 'INSPECTOR' | 'SYSTEM') || undefined;
   const actorName = stringValue(pick(source, 'actorName', 'ActorName', 'senderName', 'SenderName')) || undefined;
   const reason = stringValue(pick(source, 'reason', 'Reason')) || undefined;
@@ -264,15 +342,27 @@ function normalizeMissionLifecycleEvent(
     };
   }
 
+  const assignmentId = stringValue(pick(source, 'assignmentId', 'AssignmentId')) || undefined;
+  const allConfirmed = source['allConfirmed'] !== undefined ? Boolean(source['allConfirmed']) : (source['AllConfirmed'] !== undefined ? Boolean(source['AllConfirmed']) : undefined);
+  const confirmedCount = source['confirmedCount'] !== undefined ? Number(source['confirmedCount']) : (source['ConfirmedCount'] !== undefined ? Number(source['ConfirmedCount']) : undefined);
+  const totalRequiredCount = source['totalRequiredCount'] !== undefined ? Number(source['totalRequiredCount']) : (source['TotalRequiredCount'] !== undefined ? Number(source['TotalRequiredCount']) : undefined);
+  const rawPending = pick(source, 'pendingRoles', 'PendingRoles');
+  const pendingRoles = Array.isArray(rawPending) ? rawPending.map(String) : undefined;
+
   return {
     missionId,
     type,
     status: stringValue(pick(source, 'status', 'Status')) || undefined,
+    assignmentId,
     confirmationDeadline: stringValue(pick(source, 'confirmationDeadline', 'ConfirmationDeadline')) || undefined,
     managerInstructions: stringValue(pick(source, 'managerInstructions', 'ManagerInstructions')) || undefined,
     actorId: stringValue(pick(source, 'actorId', 'ActorId')) || undefined,
     actorName,
     actorRole,
+    allConfirmed,
+    confirmedCount,
+    totalRequiredCount,
+    pendingRoles,
     reason,
     message,
     log,
